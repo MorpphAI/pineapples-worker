@@ -1,0 +1,16 @@
+{
+	"compatibility_date": "2025-10-08",
+	"main": "src/index.ts",
+	"name": "pineapples-worker",
+	"upload_source_maps": true,
+	"observability": {
+		"enabled": true
+	},
+	"d1_databases": [
+		{
+			"binding": "DB",
+			"database_name": "pineapples-db",
+			"database_id": "78c9c603-31aa-4dad-b34e-d4fab9f3459c"
+		}
+	]
+}
