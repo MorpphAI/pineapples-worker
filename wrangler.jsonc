@@ -12,5 +12,8 @@
 			"database_name": "pineapples-db",
 			"database_id": "78c9c603-31aa-4dad-b34e-d4fab9f3459c"
 		}
-	]
+	],
+	"vars": {
+    "AVANTIO_BASE_URL": "https://api.avantio.pro/pms/v2"
+  }
 }
