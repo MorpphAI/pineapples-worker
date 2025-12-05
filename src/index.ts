@@ -1,50 +1,50 @@
-import { ApiException, fromHono } from "chanfana";
+import { fromHono } from "chanfana";
 import { Hono } from "hono";
-import { tasksRouter } from "./endpoints/tasks/router";
-import { ContentfulStatusCode } from "hono/utils/http-status";
-import { DummyEndpoint } from "./endpoints/dummyEndpoint";
+import { AvantioService } from "./services/avantioService";
+import { Env } from "./types/avantioTypes";
+import { avantioRouter } from "./endpoints/router";
 
-// Start a Hono app
 const app = new Hono<{ Bindings: Env }>();
 
-app.onError((err, c) => {
-	if (err instanceof ApiException) {
-		// If it's a Chanfana ApiException, let Chanfana handle the response
-		return c.json(
-			{ success: false, errors: err.buildResponse() },
-			err.status as ContentfulStatusCode,
-		);
-	}
-
-	console.error("Global error handler caught:", err); // Log the error if it's not known
-
-	// For other errors, return a generic 500 response
-	return c.json(
-		{
-			success: false,
-			errors: [{ code: 7000, message: "Internal Server Error" }],
-		},
-		500,
-	);
-});
-
-// Setup OpenAPI registry
 const openapi = fromHono(app, {
-	docs_url: "/",
+	docs_url: "/", 
 	schema: {
 		info: {
-			title: "My Awesome API",
-			version: "2.0.0",
-			description: "This is the documentation for my awesome API.",
+			title: "escala de acomodações",
+			version: "1.0.0",
+			description: "API para sincronizar check-ins/outs e montar escala de limpeza.",
 		},
 	},
 });
 
-// Register Tasks Sub router
-openapi.route("/tasks", tasksRouter);
+openapi.route("/", avantioRouter);
 
-// Register other endpoints
-openapi.post("/dummy/:slug", DummyEndpoint);
 
-// Export the Hono app
-export default app;
+export default {
+	fetch: app.fetch,
+
+	async scheduled(event: ScheduledEvent, env: Env, ctx: ExecutionContext) {
+		
+        console.log("[Cron] Iniciando execução agendada...");
+		
+        const service = new AvantioService(env);
+        
+		const today = new Date().toISOString().split('T')[0];
+
+		ctx.waitUntil((async () => {
+			try {
+				const checkins = await service.getCheckins(today);
+				const checkouts = await service.getCheckouts(today);
+				
+				console.log(`[Cron] Sucesso! Processados ${checkins.length} check-ins e ${checkouts.length} check-outs.`);
+				
+				// AQUI entrará a lógica futura:
+				// await database.save(checkins, checkouts);
+				// await cleanerService.createSchedule(checkins, checkouts);
+				
+			} catch (error) {
+				console.error("[Cron] Falha na execução:", error);
+			}
+		})());
+	},
+};
