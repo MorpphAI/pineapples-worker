@@ -1,8 +1,8 @@
 import { fromHono } from "chanfana";
 import { Hono } from "hono";
 import { AvantioService } from "./services/avantioService";
-import { Env } from "./types/avantioTypes";
-import { avantioRouter } from "./endpoints/router";
+import { Env } from "./types/configTypes";
+import { pineapplesRouter } from "./endpoints/router";
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -17,7 +17,7 @@ const openapi = fromHono(app, {
 	},
 });
 
-openapi.route("/", avantioRouter);
+openapi.route("/", pineapplesRouter);
 
 
 export default {
@@ -37,10 +37,6 @@ export default {
 				const checkouts = await service.getCheckouts(today);
 				
 				console.log(`[Cron] Sucesso! Processados ${checkins.length} check-ins e ${checkouts.length} check-outs.`);
-				
-				// AQUI entrará a lógica futura:
-				// await database.save(checkins, checkouts);
-				// await cleanerService.createSchedule(checkins, checkouts);
 				
 			} catch (error) {
 				console.error("[Cron] Falha na execução:", error);

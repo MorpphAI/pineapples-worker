@@ -1,8 +1,10 @@
 import { Hono } from "hono";
 import { fromHono } from "chanfana";
-import { GetAppointments } from "./avantio/getAppointments";
-import { Env } from "../types/avantioTypes";
+import { GetAppointments } from "./avantio/appointments";
+import { CreateCleaners } from "./cleaner/cleaner";
+import { Env } from "../types/configTypes";
 
-export const avantioRouter = fromHono(new Hono<{ Bindings: Env }>());
+export const pineapplesRouter = fromHono(new Hono<{ Bindings: Env }>());
 
-avantioRouter.get("/v1/appointments", GetAppointments);
+pineapplesRouter.get("/v1/appointments", GetAppointments);
+pineapplesRouter.post("/v1/cleaner", CreateCleaners);

@@ -2,7 +2,6 @@
 
 [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/cloudflare/templates/tree/main/chanfana-openapi-template)
 
-![OpenAPI Template Preview](https://imagedelivery.net/wSMYJvS3Xw-n339CbDyDIA/91076b39-1f5b-46f6-7f14-536a6f183000/public)
 
 <!-- dash-content-start -->
 
@@ -31,6 +30,11 @@ npm create cloudflare@latest -- --template=cloudflare/templates/openapi-template
 A live public deployment of this template is available at [https://openapi-template.templates.workers.dev](https://openapi-template.templates.workers.dev)
 
 ## Setup Steps
+
+Info: to run local use
+  ```bash
+   npx wrangler dev
+   ```
 
 1. Install the project dependencies with a package manager of your choice:
    ```bash
