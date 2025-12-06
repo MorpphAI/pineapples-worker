@@ -2,7 +2,7 @@ import { fromHono } from "chanfana";
 import { Hono } from "hono";
 import { AvantioService } from "./services/avantioService";
 import { Env } from "./types/configTypes";
-import { pineapplesRouter } from "./endpoints/router";
+import { pineapplesRouter } from "./controllers/router";
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -10,7 +10,7 @@ const openapi = fromHono(app, {
 	docs_url: "/", 
 	schema: {
 		info: {
-			title: "escala de acomodações",
+			title: "Pineapple de limpeza para acomodações",
 			version: "1.0.0",
 			description: "API para sincronizar check-ins/outs e montar escala de limpeza.",
 		},
