@@ -1,76 +1,154 @@
-# OpenAPI Template
+# Avantio Cleaner Scheduler 🧹
 
-[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/cloudflare/templates/tree/main/chanfana-openapi-template)
+API Serverless construída com **Cloudflare Workers**, **Hono** e **Chanfana** para automatizar a geração de escalas de limpeza baseadas em check-ins e check-outs da plataforma Avantio.
 
+---
 
-<!-- dash-content-start -->
+## 📋 Sobre o Projeto
 
-This is a Cloudflare Worker with OpenAPI 3.1 Auto Generation and Validation using [chanfana](https://github.com/cloudflare/chanfana) and [Hono](https://github.com/honojs/hono).
+O objetivo deste sistema é cruzar dados de reservas da Avantio com a disponibilidade da equipe de limpeza para gerar uma escala diária otimizada.
 
-This is an example project made to be used as a quick start into building OpenAPI compliant Workers that generates the
-`openapi.json` schema automatically from code and validates the incoming request to the defined parameters or request body.
+### Fluxo de Funcionamento
 
-This template includes various endpoints, a D1 database, and integration tests using [Vitest](https://vitest.dev/) as examples. In endpoints, you will find [chanfana D1 AutoEndpoints](https://chanfana.com/endpoints/auto/d1) and a [normal endpoint](https://chanfana.com/endpoints/defining-endpoints) to serve as examples for your projects.
+1. **Entrada 1:** Busca Check-ins (chegadas) e Check-outs (saídas) na API da Avantio
+2. **Entrada 2:** Busca a lista de camareiras ativas e suas zonas de atuação no banco D1
+3. **Processamento:** Cruza os dados identificando prioridades (ex: Turnover/Bate-volta)
+4. **Saída:** Gera e salva a escala de limpeza no banco de dados
 
-Besides being able to see the OpenAPI schema (openapi.json) in the browser, you can also extract the schema locally no hassle by running this command `npm run schema`.
+---
 
-<!-- dash-content-end -->
+## 🚀 Como Rodar o Projeto
 
-> [!IMPORTANT]
-> When using C3 to create this project, select "no" when it asks if you want to deploy. You need to follow this project's [setup steps](https://github.com/cloudflare/templates/tree/main/openapi-template#setup-steps) before deploying.
+### Pré-requisitos
 
-## Getting Started
+- Node.js instalado
+- Conta na Cloudflare
 
-Outside of this repo, you can start a new project with this template using [C3](https://developers.cloudflare.com/pages/get-started/c3/) (the `create-cloudflare` CLI):
-
-```bash
-npm create cloudflare@latest -- --template=cloudflare/templates/openapi-template
-```
-
-A live public deployment of this template is available at [https://openapi-template.templates.workers.dev](https://openapi-template.templates.workers.dev)
-
-## Setup Steps
-
-Info: to run local use
-  ```bash
-   npx wrangler dev
-   ```
-
-1. Install the project dependencies with a package manager of your choice:
-   ```bash
-   npm install
-   ```
-2. Create a [D1 database](https://developers.cloudflare.com/d1/get-started/) with the name "openapi-template-db":
-   ```bash
-   npx wrangler d1 create openapi-template-db
-   ```
-   ...and update the `database_id` field in `wrangler.json` with the new database ID.
-3. Run the following db migration to initialize the database (notice the `migrations` directory in this project):
-   ```bash
-   npx wrangler d1 migrations apply DB --remote
-   ```
-4. Deploy the project!
-   ```bash
-   npx wrangler deploy
-   ```
-5. Monitor your worker
-   ```bash
-   npx wrangler tail
-   ```
-
-## Testing
-
-This template includes integration tests using [Vitest](https://vitest.dev/). To run the tests locally:
+### 1. Instalação
 
 ```bash
-npm run test
+npm install
 ```
 
-Test files are located in the `tests/` directory, with examples demonstrating how to test your endpoints and database interactions.
+### 2. Configuração de Variáveis
 
-## Project structure
+Crie um arquivo `.dev.vars` na raiz do projeto (não comite este arquivo) com as credenciais:
 
-1. Your main router is defined in `src/index.ts`.
-2. Each endpoint has its own file in `src/endpoints/`.
-3. Integration tests are located in the `tests/` directory.
-4. For more information read the [chanfana documentation](https://chanfana.com/), [Hono documentation](https://hono.dev/docs), and [Vitest documentation](https://vitest.dev/guide/).
+```env
+AVANTIO_API_KEY=sua_chave_aqui
+AVANTIO_BASE_URL=https://api.avantio.pro/pms/v2
+```
+
+### 3. Executando Localmente
+
+Existem dois modos de rodar o projeto localmente:
+
+#### Modo A: Totalmente Local (Banco Mockado)
+
+Roda o código no seu PC e cria um banco SQLite temporário na pasta `.wrangler`. Ideal para desenvolvimento rápido sem internet.
+
+```bash
+npx wrangler dev
+```
+
+#### Modo B: Local com Banco Real (Recomendado)
+
+Roda o código no seu PC, mas conecta e salva os dados no banco D1 da Cloudflare (Produção). Ideal para testar com dados reais.
+
+```bash
+npx wrangler dev --remote
+```
+
+Acesse a documentação (Swagger) em: http://localhost:8787
+
+---
+
+## 🗄️ Banco de Dados (D1)
+
+O projeto utiliza o **Cloudflare D1** (SQLite na Borda). O nome do banco configurado no `wrangler.jsonc` é `pineapples-db`.
+
+### Comandos de Migração (Migrations)
+
+Sempre que alterar a estrutura do banco (criar tabelas, alterar colunas), use os comandos abaixo:
+
+#### 1. Criar uma nova migração
+
+Gera um arquivo `.sql` na pasta `migrations/`.
+
+```bash
+npx wrangler d1 migrations create pineapples-db nome_da_mudanca
+```
+
+**Exemplo:**
+```bash
+npx wrangler d1 migrations create pineapples-db create_schedule_table
+```
+
+#### 2. Aplicar migração LOCALMENTE
+
+Atualiza o banco temporário do seu computador.
+
+```bash
+npx wrangler d1 migrations apply pineapples-db --local
+```
+
+#### 3. Aplicar migração em PRODUÇÃO (Remoto)
+
+⚠️ **Cuidado:** Afeta os dados reais na nuvem da Cloudflare.
+
+```bash
+npx wrangler d1 migrations apply pineapples-db --remote
+```
+
+---
+
+## 🛠️ Arquitetura do Projeto
+
+O projeto segue o padrão de camadas (Layered Architecture):
+
+```
+src/
+├── index.ts                    # Ponto de entrada (Hono, Swagger, Cron Job)
+├── controllers/                # Controladores das rotas (GET, POST)
+│   ├── router.ts
+│   ├── avantio/               # Rotas de sincronização
+│   └── cleaner/               # Gestão da equipe
+├── services/                   # Regras de negócio e lógica pesada
+│   ├── avantioService.ts
+│   └── cleanerService.ts
+├── repositories/               # Acesso direto ao banco de dados (SQL)
+│   └── cleanerRepository.ts
+└── types/                      # Interfaces TypeScript e Variáveis de Ambiente
+    ├── avantioTypes.ts
+    ├── cleanerTypes.ts
+    └── configTypes.ts
+```
+
+---
+
+## 📦 Deploy
+
+### Fazer Deploy para Produção
+
+Para subir a versão final para a Cloudflare:
+
+```bash
+npx wrangler deploy
+```
+
+### Ver Logs em Tempo Real
+
+Para monitorar os logs do servidor de produção:
+
+```bash
+npx wrangler tail
+```
+
+---
+
+## 📚 Recursos Úteis
+
+- [Documentação Cloudflare Workers](https://developers.cloudflare.com/workers/)
+- [Documentação Hono](https://hono.dev/)
+- [Documentação Cloudflare D1](https://developers.cloudflare.com/d1/)
+- [API Avantio](https://api.avantio.pro/pms/v2)
