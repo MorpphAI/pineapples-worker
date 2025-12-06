@@ -1,4 +1,4 @@
-import { Env } from "../types/avantioTypes";
+import { Env } from "../types/configTypes";
 import { AvantioBooking, AvantioResponse } from "../types/avantioTypes";
 
 
