@@ -1,7 +1,7 @@
 import { OpenAPIRoute } from "chanfana";
 import { z } from "zod";
 import { Env } from "../../types/configTypes";
-import { ScheduleService } from "../../services/scheduleService"; 
+import { PrioritizeService } from "../../services/prioritizeService";
 
 export class GeneratePriority extends OpenAPIRoute { 
     schema = {
@@ -62,9 +62,9 @@ export class GeneratePriority extends OpenAPIRoute {
         const targetDate = data.query.date || today;
 
         try {
-            const scheduleService = new ScheduleService(c.env as Env);
+            const prioritizeService = new PrioritizeService(c.env as Env);
 
-            const result = await scheduleService.generateDailySchedule(targetDate);
+            const result = await prioritizeService.generatePriority(targetDate);
 
             return c.json({
                 status: "success",
