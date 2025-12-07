@@ -18,7 +18,8 @@ export interface AvantioBooking {
 }
 
 export interface AvantioAccommodation {
-    galleryId: string;   
+    id: string;  
+    galleryId: string;
     name: string;        
     status: AccommodationStatus;
     

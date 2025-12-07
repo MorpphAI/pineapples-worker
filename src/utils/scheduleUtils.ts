@@ -16,7 +16,7 @@ export function extractZoneFromAccommodationName(name: string): string | null {
     const normalized = name.toUpperCase();
 
     const zonaMatch = normalized.match(/ZONA\s*(\d+)/);
-    if (zonaMatch) {
+    if (zonaMatch) {    
         return `ZONA${zonaMatch[1]}`;
     }
 

@@ -6,7 +6,7 @@ import { AccommodationStatus, AvantioAccommodation } from "../types/avantioTypes
 import { AvantioBooking } from "../types/avantioTypes";
 import * as utils from "../utils/scheduleUtils";
 
-export class ScheduleService {
+export class PrioritizeService {
     private avantioService: AvantioService;
     private scheduleRepo: ScheduleRepository;
 
@@ -15,7 +15,7 @@ export class ScheduleService {
         this.scheduleRepo = new ScheduleRepository(env.DB);
     }
 
-    async generateDailySchedule(date: string) {
+    async generatePriority(date: string) {
         
         console.log(`[ScheduleService] Iniciando geração para ${date}`);
     
@@ -31,9 +31,7 @@ export class ScheduleService {
 
         const prioritizedTasks = this.prioritizeTasks(tasks);
 
-        const runId = await this.scheduleRepo.saveScheduleRun(date, prioritizedTasks);
-
-        return { runId, items: prioritizedTasks };
+        return { items: prioritizedTasks };
     }
 
 
