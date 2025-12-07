@@ -1,7 +1,7 @@
 import { OpenAPIRoute } from "chanfana";
 import { z } from "zod";
 import { AvantioService } from "../../services/avantioService";
-import { Env } from "../../types/avantioTypes";
+import { Env } from "../../types/configTypes";
 
 export class GetAppointments extends OpenAPIRoute {
 	schema = {
