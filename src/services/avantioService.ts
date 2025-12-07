@@ -1,5 +1,5 @@
 import { Env } from "../types/configTypes";
-import { AvantioBooking, AvantioResponse } from "../types/avantioTypes";
+import { AvantioBooking, AvantioResponse, AvantioAccommodation } from "../types/avantioTypes";
 
 
 export class AvantioService {
@@ -71,4 +71,29 @@ export class AvantioService {
 
         return this.fetchAllPages(url.toString());
     }
+  
+    async getAccommodation(accommodationId: string): Promise<AvantioAccommodation | null> {
+      const url = `${this.baseUrl}/accommodations/${accommodationId}`;
+      
+      try {
+          const response = await fetch(url, {
+              method: "GET",
+              headers: {
+                  "x-avantio-auth": this.apiKey,
+                  "accept": "application/json",
+              },
+          });
+
+          if (!response.ok) {
+              console.error(`[AvantioService] Falha ao buscar imóvel ${accommodationId}: ${response.status}`);
+              return null;
+          }
+
+          const json = await response.json() as { data: AvantioAccommodation };
+          return json.data;
+      } catch (error) {
+          console.error(`[AvantioService] Erro de rede ao buscar imóvel ${accommodationId}`, error);
+          return null;
+      }
+  }
 }

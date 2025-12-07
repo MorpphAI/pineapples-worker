@@ -66,10 +66,10 @@ export class CreateScales extends OpenAPIRoute {
                 runId: result.runId,
                 totalTasks: result.items.length,
                 preview: result.items.map(item => ({
-                    accommodation: item.accommodation_code, 
+                    accommodation: item.accommodationId, 
                     zone: item.zone,
-                    cleaner: item.cleaner_name,
-                    type: item.is_turnover ? "TURNOVER" : "SIMPLE"
+                    cleaner: item.accommodationName,
+                    type: item.isTurnover ? "TURNOVER" : "SIMPLE"
                 }))
             }, 201); 
 
