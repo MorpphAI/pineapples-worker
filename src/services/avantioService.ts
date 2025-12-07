@@ -89,8 +89,13 @@ export class AvantioService {
               return null;
           }
 
-          const json = await response.json() as { data: AvantioAccommodation };
-          return json.data;
+          const json = await response.json() as { data: Omit<AvantioAccommodation, 'id'> };
+          
+            return {
+              ...json.data,
+              id: accommodationId 
+            } as AvantioAccommodation;
+        
       } catch (error) {
           console.error(`[AvantioService] Erro de rede ao buscar imóvel ${accommodationId}`, error);
           return null;

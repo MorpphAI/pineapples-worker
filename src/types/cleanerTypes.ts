@@ -16,6 +16,9 @@ export interface CleaningEffort {
 }
 
 export interface CleaningTask {
+    bookingOutId?: string | null;    
+    bookingInId?: string | null;
+    bookingId?: string;
     accommodationId: string;
     accommodationName: string;
     zone: string;

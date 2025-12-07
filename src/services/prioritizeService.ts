@@ -91,11 +91,11 @@ export class PrioritizeService {
                 continue; 
             }
 
-            const bookingIn = checkins.find(b => b.accommodationId === accommodation.galleryId);
+            const bookingIn = checkins.find(b => b.accommodationId === accommodation.id);
 
-            const bookingOut = checkouts.find(b => b.accommodationId === accommodation.galleryId);
+            const bookingOut = checkouts.find(b => b.accommodationId === accommodation.id);
 
-            const isTurnover = turnoverIds.has(accommodation.galleryId);
+            const isTurnover = turnoverIds.has(accommodation.id);
 
             const area = accommodation.area?.livingSpace?.amount || 0; 
             
@@ -104,7 +104,9 @@ export class PrioritizeService {
             const address = `${accommodation.location.address}, ${accommodation.location.number} ${accommodation.location.door || ''} - ${accommodation.location.cityName}`;
 
             tasks.push({
-                accommodationId: accommodation.galleryId,
+                bookingInId: bookingIn ? bookingIn.id : null,
+                bookingOutId: bookingOut ? bookingOut.id : null,
+                accommodationId: accommodation.id,
                 accommodationName: accommodation.name,
                 zone: zone,
                 checkInTime: bookingIn ? bookingIn.stayDates.arrival : null,
