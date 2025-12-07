@@ -16,16 +16,18 @@ export class ScheduleService {
     }
 
     async generateDailySchedule(date: string) {
+        
         console.log(`[ScheduleService] Iniciando geração para ${date}`);
-
     
         const { checkins, checkouts } = await this.fetchAndFilterBookings(date);
         
         const turnoverIds = this.identifyTurnovers(checkins, checkouts);
 
-        const uniqueAccommodationIds = this.getUniqueAccommodationIds(checkins, checkouts);
+        const idsToClean = this.getAccommodationIdsToClean(checkouts);
 
-        const tasks = await this.enrichAndBuildTasks(uniqueAccommodationIds, checkins, checkouts, turnoverIds);
+        console.log(`[ScheduleService] Imóveis para limpar: ${idsToClean.size}`);
+
+        const tasks = await this.enrichAndBuildTasks(idsToClean, checkins, checkouts, turnoverIds);
 
         const prioritizedTasks = this.prioritizeTasks(tasks);
 
@@ -45,7 +47,14 @@ export class ScheduleService {
         const checkouts = rawCheckouts.filter(b => utils.isValidBookingStatus(b.status));
 
         console.log(`[ScheduleService] Filtrados: ${checkins.length} Check-ins, ${checkouts.length} Check-outs`);
+        
         return { checkins, checkouts };
+    }
+
+    private getAccommodationIdsToClean(checkouts: AvantioBooking[]): Set<string> {
+        const ids = new Set<string>();
+        checkouts.forEach(b => ids.add(b.accommodationId));
+        return ids;
     }
 
     private identifyTurnovers(checkins: AvantioBooking[], checkouts: AvantioBooking[]): Set<string> {
@@ -59,46 +68,46 @@ export class ScheduleService {
         }
         return turnoverIds;
     }
-    
-    private getUniqueAccommodationIds(checkins: AvantioBooking[], checkouts: AvantioBooking[]): Set<string> {
-        const ids = new Set<string>();
-        checkins.forEach(b => ids.add(b.accommodationId));
-        checkouts.forEach(b => ids.add(b.accommodationId));
-        return ids;
-    }
 
     private async enrichAndBuildTasks(
-        ids: Set<string>, 
+        idsToClean: Set<string>, 
         checkins: AvantioBooking[], 
         checkouts: AvantioBooking[],
         turnoverIds: Set<string>
     ): Promise<CleaningTask[]> {
+        
         const tasks: CleaningTask[] = [];
 
-        const fetchPromises = Array.from(ids).map(id => this.avantioService.getAccommodation(id));
-        const accommodations = await Promise.all(fetchPromises);
+        const fetchAccommodations = Array.from(idsToClean).map(id => this.avantioService.getAccommodation(id));
+        
+        const accommodations = await Promise.all(fetchAccommodations);
 
-        for (const acc of accommodations) {
-            if (!acc || acc.status === AccommodationStatus.DISABLED) continue;
+        for (const accommodation of accommodations) {
+            
+            if (!accommodation || accommodation.status === AccommodationStatus.DISABLED) continue;
 
-            const zone = utils.extractZoneFromAccommodationName(acc.name);
+            const zone = utils.extractZoneFromAccommodationName(accommodation.name);
+            
             if (!zone) {
-                console.warn(`[ScheduleService] Imóvel ${acc.name} ignorado: Zona não identificada.`);
+                console.warn(`[ScheduleService] Imóvel ${accommodation.name} ignorado: Zona não identificada.`);
                 continue; 
             }
 
-            const bookingIn = checkins.find(b => b.accommodationId === acc.galleryId);
-            const bookingOut = checkouts.find(b => b.accommodationId === acc.galleryId);
-            const isTurnover = turnoverIds.has(acc.galleryId);
+            const bookingIn = checkins.find(b => b.accommodationId === accommodation.galleryId);
 
-            const area = acc.area?.livingSpace?.amount || 0; 
+            const bookingOut = checkouts.find(b => b.accommodationId === accommodation.galleryId);
+
+            const isTurnover = turnoverIds.has(accommodation.galleryId);
+
+            const area = accommodation.area?.livingSpace?.amount || 0; 
+            
             const effort = utils.calculateCleaningEffort(area);
 
-            const address = `${acc.location.address}, ${acc.location.number} ${acc.location.door || ''} - ${acc.location.cityName}`;
+            const address = `${accommodation.location.address}, ${accommodation.location.number} ${accommodation.location.door || ''} - ${accommodation.location.cityName}`;
 
             tasks.push({
-                accommodationId: acc.galleryId,
-                accommodationName: acc.name,
+                accommodationId: accommodation.galleryId,
+                accommodationName: accommodation.name,
                 zone: zone,
                 checkInTime: bookingIn ? bookingIn.stayDates.arrival : null,
                 checkOutTime: bookingOut ? bookingOut.stayDates.departure : null,

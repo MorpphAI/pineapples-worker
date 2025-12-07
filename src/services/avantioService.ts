@@ -78,8 +78,8 @@ export class AvantioService {
       try {
           const response = await fetch(url, {
               method: "GET",
-              headers: {
-                  "x-avantio-auth": this.apiKey,
+              headers: {  
+                  "X-Avantio-Auth": this.apiKey,
                   "accept": "application/json",
               },
           });
