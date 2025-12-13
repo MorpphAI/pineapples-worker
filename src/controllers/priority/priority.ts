@@ -26,8 +26,8 @@ export class GeneratePriority extends OpenAPIRoute {
                                     accommodationName: z.string(),
                                     zone: z.string(),
                                     isTurnover: z.boolean(),
-                                    checkInTime: z.string().nullable(),
-                                    checkOutTime: z.string().nullable(),
+                                    checkInDate: z.string().nullable(),
+                                    checkOutDate: z.string().nullable(),
                                     areaM2: z.number(),
                                     effort: z.object({
                                         teamSize: z.number(),
