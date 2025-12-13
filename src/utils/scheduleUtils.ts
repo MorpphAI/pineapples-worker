@@ -46,3 +46,15 @@ export function calculateCleaningEffort(areaM2: number): CleaningEffort {
 
     return { teamSize: 2, estimatedMinutes: 180 };
 }
+
+export function timeToMinutes(time: string): number {
+    if (!time) return 0;
+    const [h, m] = time.split(':').map(Number);
+    return (h * 60) + m;
+}
+
+export function minutesToTime(minutes: number): string {
+    const h = Math.floor(minutes / 60);
+    const m = minutes % 60;
+    return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+}

@@ -2,7 +2,7 @@ import { AvantioService } from "./avantioService";
 import { ScheduleRepository } from "../repositories/scheduleRepository";
 import { CleanerRepository } from "../repositories/cleanerRepository";
 import { Env } from "../types/configTypes";
-import { CleaningTask } from "../types/cleanerTypes";
+import { CleaningTask, CleanerState } from "../types/cleanerTypes";
 import { AccommodationStatus, AvantioAccommodation } from "../types/avantioTypes";
 import { AvantioBooking } from "../types/avantioTypes";
 import * as utils from "../utils/scheduleUtils";
@@ -36,7 +36,9 @@ export class ScheduleService {
 
         const prioritizedTasks = this.prioritizeTasks(tasks);
 
-        const runId = await this.scheduleRepo.saveScheduleRun(date, prioritizedTasks);
+        const allocatedTasks = await this.allocateTasksToCleaners(prioritizedTasks);
+
+        const runId = await this.scheduleRepo.saveScheduleRun(date, allocatedTasks);
 
         return { runId, items: prioritizedTasks };
     }
@@ -146,5 +148,77 @@ export class ScheduleService {
 
             return a.accommodationName.localeCompare(b.accommodationName);
         });
+    }
+
+
+    private async allocateTasksToCleaners(tasks: CleaningTask[]): Promise<CleaningTask[]> {
+
+        const activeCleaners = await this.cleanerRepo.findAllActive();
+        
+        if (!activeCleaners.length) {
+            console.warn("ALERTA: Nenhuma faxineira ativa encontrada!");
+            return tasks; 
+        }
+
+        const cleanersState: CleanerState[] = activeCleaners.map(c => ({
+            ...c,
+            currentAvailableMinutes: utils.timeToMinutes(c.shift_start),
+            shiftEndMinutes: utils.timeToMinutes(c.shift_end),
+            tasksCount: 0
+        }));
+
+        for (const task of tasks) {
+            const requiredPeople = task.effort.teamSize;
+            const duration = task.effort.estimatedMinutes;
+
+            let candidates = cleanersState.filter(c => {
+
+                const zoneMatch = c.zones.toUpperCase().includes(task.zone.toUpperCase());
+                if (!zoneMatch) return false;
+
+                const travelBuffer = c.tasksCount > 0 ? this.TRAVEL_BUFFER_MINUTES : 0;
+                
+                const effectiveStartTime = c.currentAvailableMinutes + travelBuffer;
+                
+                const taskEnd = effectiveStartTime + duration;
+
+                return taskEnd <= c.shiftEndMinutes;
+            });
+
+            candidates.sort((a, b) => {
+                const startA = a.currentAvailableMinutes + (a.tasksCount > 0 ? this.TRAVEL_BUFFER_MINUTES : 0);
+                const startB = b.currentAvailableMinutes + (b.tasksCount > 0 ? this.TRAVEL_BUFFER_MINUTES : 0);
+                return startA - startB;
+            });
+
+            if (candidates.length >= requiredPeople) {
+
+                const selectedTeam = candidates.slice(0, requiredPeople);
+
+                const startMinutes = Math.max(...selectedTeam.map(c => {
+                    const travelBuffer = c.tasksCount > 0 ? this.TRAVEL_BUFFER_MINUTES : 0;
+                    return c.currentAvailableMinutes + travelBuffer;
+                }));
+
+                const endMinutes = startMinutes + duration;
+
+                task.cleanerName = selectedTeam.map(c => c.name).join(" & ");
+                task.startTime = utils.minutesToTime(startMinutes);
+                task.endTime = utils.minutesToTime(endMinutes);
+
+                selectedTeam.forEach(cleaner => {
+                    cleaner.currentAvailableMinutes = endMinutes; 
+                    cleaner.tasksCount++;
+                });
+
+            } else {
+                task.cleanerName = "";
+                task.startTime = "";
+                task.endTime = "";
+                console.warn(`[Alocação] Falha: Tarefa ${task.accommodationName} (${task.zone}) precisa de ${requiredPeople} pessoas.`);
+            }
+        }
+
+        return tasks;
     }
 }

@@ -16,6 +16,9 @@ export interface CleaningEffort {
 }
 
 export interface CleaningTask {
+    cleanerName?: string;
+    startTime?: string;
+    endTime?: string;
     bookingOutId?: string | null;    
     bookingInId?: string | null;
     bookingId?: string;
@@ -31,7 +34,7 @@ export interface CleaningTask {
     address: string;
 }
 
-interface CleanerState extends Cleaner {
+export interface CleanerState extends Cleaner {
     currentAvailableMinutes: number; 
     shiftEndMinutes: number;         
     tasksCount: number;              
