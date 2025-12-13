@@ -11,4 +11,4 @@ export const pineapplesRouter = fromHono(new Hono<{ Bindings: Env }>());
 pineapplesRouter.get("/v1/appointments", GetAppointments);
 pineapplesRouter.post("/v1/cleaner", CreateCleaners);
 pineapplesRouter.post("/v1/scale", CreateScales);
-pineapplesRouter.get("/v1/Generatepriority", GeneratePriority);
+pineapplesRouter.get("/v1/generatepriority", GeneratePriority);

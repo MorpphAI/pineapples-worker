@@ -16,11 +16,11 @@ export class ScheduleService {
     }
 
     async generateDailySchedule(date: string) {
-        
+
         console.log(`[ScheduleService] Iniciando geração para ${date}`);
-    
+
         const { checkins, checkouts } = await this.fetchAndFilterBookings(date);
-        
+
         const turnoverIds = this.identifyTurnovers(checkins, checkouts);
 
         const idsToClean = this.getAccommodationIdsToClean(checkouts);
@@ -47,7 +47,7 @@ export class ScheduleService {
         const checkouts = rawCheckouts.filter(b => utils.isValidBookingStatus(b.status));
 
         console.log(`[ScheduleService] Filtrados: ${checkins.length} Check-ins, ${checkouts.length} Check-outs`);
-        
+
         return { checkins, checkouts };
     }
 
@@ -70,27 +70,27 @@ export class ScheduleService {
     }
 
     private async enrichAndBuildTasks(
-        idsToClean: Set<string>, 
-        checkins: AvantioBooking[], 
+        idsToClean: Set<string>,
+        checkins: AvantioBooking[],
         checkouts: AvantioBooking[],
         turnoverIds: Set<string>
     ): Promise<CleaningTask[]> {
-        
+
         const tasks: CleaningTask[] = [];
 
         const fetchAccommodations = Array.from(idsToClean).map(id => this.avantioService.getAccommodation(id));
-        
+
         const accommodations = await Promise.all(fetchAccommodations);
 
         for (const accommodation of accommodations) {
-            
+
             if (!accommodation || accommodation.status === AccommodationStatus.DISABLED) continue;
 
             const zone = utils.extractZoneFromAccommodationName(accommodation.name);
-            
+
             if (!zone) {
                 console.warn(`[ScheduleService] Imóvel ${accommodation.name} ignorado: Zona não identificada.`);
-                continue; 
+                continue;
             }
 
             const bookingIn = checkins.find(b => b.accommodationId === accommodation.id);
@@ -99,8 +99,8 @@ export class ScheduleService {
 
             const isTurnover = turnoverIds.has(accommodation.id);
 
-            const area = accommodation.area?.livingSpace?.amount || 0; 
-            
+            const area = accommodation.area?.livingSpace?.amount || 0;
+
             const effort = utils.calculateCleaningEffort(area);
 
             const address = `${accommodation.location.address}, ${accommodation.location.number} ${accommodation.location.door || ''} - ${accommodation.location.cityName}`;
@@ -132,7 +132,7 @@ export class ScheduleService {
             if (!aHasCheckin && bHasCheckin) return 1;
 
             if (a.effort.teamSize !== b.effort.teamSize) {
-                return b.effort.teamSize - a.effort.teamSize; 
+                return b.effort.teamSize - a.effort.teamSize;
             }
 
             if (a.areaM2 !== b.areaM2) {
