@@ -1,5 +1,5 @@
 import { D1Database } from "@cloudflare/workers-types";
-import { Cleaner, NewCleaner } from "../types/cleanerTypes";
+import { Cleaner, NewCleaner } from "../../types/cleanerTypes";
 
 export class CleanerRepository {
     private db: D1Database;

@@ -1,7 +1,7 @@
 import { OpenAPIRoute } from "chanfana";
 import { z } from "zod";
 import { Env } from "../../types/configTypes";
-import { ScheduleService } from "../../services/scheduleService"; 
+import { ScheduleService } from "../../services/scale/scaleService"; 
 
 export class CreateScales extends OpenAPIRoute { 
     schema = {

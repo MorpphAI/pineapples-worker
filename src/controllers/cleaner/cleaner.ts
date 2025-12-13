@@ -1,6 +1,6 @@
 import { OpenAPIRoute } from "chanfana";
 import { z } from "zod";
-import { CleanerService } from "../../services/cleanerService";
+import { CleanerService } from "../../services/cleaner/cleanerService";
 import { Env } from "../../types/configTypes";
 
 export class CreateCleaners extends OpenAPIRoute {

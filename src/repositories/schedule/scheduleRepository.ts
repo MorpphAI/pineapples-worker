@@ -1,5 +1,5 @@
 import { D1Database } from "@cloudflare/workers-types";
-import { CleaningTask } from "../types/cleanerTypes";
+import { CleaningTask } from "../../types/cleanerTypes";
 
 export class ScheduleRepository {
     private db: D1Database;
