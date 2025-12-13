@@ -6,7 +6,7 @@ import { ScaleService } from "../../services/scale/scaleService";
 import { Context } from "hono"; 
 
 export class CreateScales extends OpenAPIRoute { 
-    schema = {
+   schema = {
             tags: ["Scales"],
             summary: "Gerar Escala de Limpeza Diária",
             description: "Processa check-ins, check-outs e equipe disponível para gerar e salvar a escala do dia.",
@@ -23,14 +23,10 @@ export class CreateScales extends OpenAPIRoute {
                             schema: z.object({
                                 success: z.boolean(),
                                 message: z.string(),
-                                runId: z.number().describe("ID do lote gerado no banco"),
+                                runId: z.number(),
                                 totalTasks: z.number(),
-                                preview: z.array(z.object({
-                                    accommodation: z.string(),
-                                    zone: z.string(),
-                                    cleaner: z.string().nullable(),
-                                    type: z.string()
-                                }))
+                                fileBase64: z.string(),
+                                fileName: z.string()
                             }),
                         },
                     },

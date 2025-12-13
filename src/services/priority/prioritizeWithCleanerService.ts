@@ -1,4 +1,5 @@
 import { AvantioService } from "../avantio/avantioService";
+import { ScheduleRepository } from "../../repositories/schedule/scheduleRepository";
 import { Env } from "../../types/configTypes";
 import { CleaningTask, CleanerState } from "../../types/cleanerTypes";
 import { CleanerRepository } from "../../repositories/cleaner/cleanerRepository";
@@ -8,11 +9,13 @@ import * as utils from "../../utils/scheduleUtils";
 
 export class PrioritizeService {
     private avantioService: AvantioService;
+    private scheduleRepo: ScheduleRepository;
     private cleanerRepo: CleanerRepository;
     private readonly TRAVEL_BUFFER_MINUTES = 30;
 
     constructor(env: Env) {
         this.avantioService = new AvantioService(env);
+        this.scheduleRepo = new ScheduleRepository(env.DB);
         this.cleanerRepo = new CleanerRepository(env.DB);
     }
 
@@ -32,7 +35,9 @@ export class PrioritizeService {
 
         const prioritizedTasks = this.prioritizeTasks(tasks);
 
-        return { items: prioritizedTasks };
+        const allocatedTasks = await this.allocateTasksToCleaners(prioritizedTasks);
+
+        return { items: allocatedTasks };
     }
 
 
