@@ -28,8 +28,8 @@ export class ScheduleRepository {
                 t.zone,
                 t.accommodationName, 
                 t.isTurnover ? 1 : 0,
-                t.checkInTime,  
-                t.checkOutTime, 
+                t.checkInDate,  
+                t.checkOutDate, 
                 t.address
             ));
 

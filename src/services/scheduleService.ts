@@ -1,5 +1,6 @@
 import { AvantioService } from "./avantioService";
 import { ScheduleRepository } from "../repositories/scheduleRepository";
+import { CleanerRepository } from "../repositories/cleanerRepository";
 import { Env } from "../types/configTypes";
 import { CleaningTask } from "../types/cleanerTypes";
 import { AccommodationStatus, AvantioAccommodation } from "../types/avantioTypes";
@@ -9,10 +10,14 @@ import * as utils from "../utils/scheduleUtils";
 export class ScheduleService {
     private avantioService: AvantioService;
     private scheduleRepo: ScheduleRepository;
+    private cleanerRepo: CleanerRepository;
+    private readonly TRAVEL_BUFFER_MINUTES = 30;
+
 
     constructor(env: Env) {
         this.avantioService = new AvantioService(env);
         this.scheduleRepo = new ScheduleRepository(env.DB);
+        this.cleanerRepo = new CleanerRepository(env.DB);
     }
 
     async generateDailySchedule(date: string) {
