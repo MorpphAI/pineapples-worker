@@ -8,6 +8,19 @@ export class CleanerRepository {
         this.db = db;
     }
 
+     async findAllActive(): Promise<Cleaner[]> {
+        try {
+            const { results } = await this.db
+                .prepare("SELECT * FROM cleaners WHERE is_active = 1 ORDER BY name ASC")
+                .all<Cleaner>();
+            
+            return results || [];
+        } catch (error) {
+            console.error("[CleanerRepository] Erro ao buscar equipe ativa:", error);
+            return [];
+        }
+    }
+
     async CreateCleaners(cleaners: NewCleaner[]): Promise<boolean> {
         if (cleaners.length === 0) return true;
 
@@ -26,13 +39,5 @@ export class CleanerRepository {
             console.error("Erro no batch insert:", error);
             throw new Error("Falha ao salvar lista de colaboradores.");
         }
-    }
-
-    async findAllActive(): Promise<Cleaner[]> {
-        const { results } = await this.db
-            .prepare("SELECT * FROM cleaners WHERE is_active = 1 ORDER BY name ASC")
-            .all<Cleaner>();
-        
-        return results;
     }
 }

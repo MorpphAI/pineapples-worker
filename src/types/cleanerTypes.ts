@@ -30,3 +30,9 @@ export interface CleaningTask {
     priorityScore?: number;
     address: string;
 }
+
+interface CleanerState extends Cleaner {
+    currentAvailableMinutes: number; 
+    shiftEndMinutes: number;         
+    tasksCount: number;              
+}
