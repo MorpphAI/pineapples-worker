@@ -111,8 +111,8 @@ export class ScheduleService {
                 accommodationId: accommodation.id,
                 accommodationName: accommodation.name,
                 zone: zone,
-                checkInTime: bookingIn ? bookingIn.stayDates.arrival : null,
-                checkOutTime: bookingOut ? bookingOut.stayDates.departure : null,
+                checkInDate: bookingIn ? bookingIn.stayDates.arrival : null,
+                checkOutDate: bookingOut ? bookingOut.stayDates.departure : null,
                 isTurnover: isTurnover,
                 areaM2: area,
                 address: address,
@@ -125,8 +125,8 @@ export class ScheduleService {
 
     private prioritizeTasks(tasks: CleaningTask[]): CleaningTask[] {
         return tasks.sort((a, b) => {
-            const aHasCheckin = !!a.checkInTime;
-            const bHasCheckin = !!b.checkInTime;
+            const aHasCheckin = !!a.checkInDate;
+            const bHasCheckin = !!b.checkInDate;
 
             if (aHasCheckin && !bHasCheckin) return -1;
             if (!aHasCheckin && bHasCheckin) return 1;

@@ -22,8 +22,8 @@ export interface CleaningTask {
     accommodationId: string;
     accommodationName: string;
     zone: string;
-    checkInTime: string | null;
-    checkOutTime: string | null; 
+    checkInDate: string | null;
+    checkOutDate: string | null; 
     isTurnover: boolean;
     areaM2: number;
     effort: CleaningEffort;
