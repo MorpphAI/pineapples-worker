@@ -1,7 +1,8 @@
 import { OpenAPIRoute } from "chanfana";
 import { z } from "zod";
 import { Env } from "../../types/configTypes";
-import { ScheduleService } from "../../services/scale/scaleService"; 
+import { ReportService } from "../../services/scale/reportService";
+import { ScaleService } from "../../services/scale/scaleService"; 
 import { Context } from "hono"; 
 
 export class CreateScales extends OpenAPIRoute { 
@@ -49,30 +50,30 @@ export class CreateScales extends OpenAPIRoute {
     };
 
     async handle(c: Context<{ Bindings: Env }>) {
-
+        
         const data = await this.getValidatedData<typeof this.schema>();
-
+        
         const today = new Date().toISOString().split("T")[0];
 
         const targetDate = data.query.date || today;
 
         try {
-            const scheduleService = new ScheduleService(c.env as Env);
+            const scaleService = new ScaleService(c.env);
 
-            const result = await scheduleService.generateDailySchedule(targetDate);
+            const result = await scaleService.generateDailySchedule(targetDate);
+
+            const reportService = new ReportService();
+
+            const report = reportService.generateScaleReport(targetDate, result.items);
 
             return c.json({
                 success: true,
                 message: `Escala gerada para o dia ${targetDate}`,
                 runId: result.runId,
                 totalTasks: result.items.length,
-                preview: result.items.map(item => ({
-                    accommodation: item.accommodationId, 
-                    zone: item.zone,
-                    cleaner: item.accommodationName,
-                    type: item.isTurnover ? "TURNOVER" : "SIMPLE"
-                }))
-            }, 201); 
+                fileBase64: report,
+                fileName: `escala_limpeza_${targetDate}.xlsx`
+            }, 201);
 
         } catch (error: any) {
             console.error(error);

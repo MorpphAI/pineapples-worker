@@ -7,7 +7,7 @@ import { AccommodationStatus, AvantioAccommodation } from "../../types/avantioTy
 import { AvantioBooking } from "../../types/avantioTypes";
 import * as utils from "../../utils/scheduleUtils";
 
-export class ScheduleService {
+export class ScaleService {
     private avantioService: AvantioService;
     private scheduleRepo: ScheduleRepository;
     private cleanerRepo: CleanerRepository;
