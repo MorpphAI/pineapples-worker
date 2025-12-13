@@ -2,6 +2,7 @@ import { OpenAPIRoute } from "chanfana";
 import { z } from "zod";
 import { Env } from "../../types/configTypes";
 import { ScheduleService } from "../../services/scale/scaleService"; 
+import { Context } from "hono"; 
 
 export class CreateScales extends OpenAPIRoute { 
     schema = {
@@ -47,7 +48,7 @@ export class CreateScales extends OpenAPIRoute {
             },
     };
 
-    async handle(c) {
+    async handle(c: Context<{ Bindings: Env }>) {
 
         const data = await this.getValidatedData<typeof this.schema>();
 

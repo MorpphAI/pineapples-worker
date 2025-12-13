@@ -2,6 +2,7 @@ import { OpenAPIRoute } from "chanfana";
 import { z } from "zod";
 import { CleanerService } from "../../services/cleaner/cleanerService";
 import { Env } from "../../types/configTypes";
+import { Context } from "hono"; 
 
 export class CreateCleaners extends OpenAPIRoute {
     schema = {
@@ -40,7 +41,7 @@ export class CreateCleaners extends OpenAPIRoute {
         },
     };
 
-    async handle(c) {
+    async handle(c: Context<{ Bindings: Env }>) {
         const data = await this.getValidatedData<typeof this.schema>();
         const { cleaners } = data.body;
 

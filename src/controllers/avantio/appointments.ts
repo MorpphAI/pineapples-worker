@@ -2,6 +2,7 @@ import { OpenAPIRoute } from "chanfana";
 import { z } from "zod";
 import { AvantioService } from "../../services/avantio/avantioService";
 import { Env } from "../../types/configTypes";
+import { Context } from "hono";
 
 export class GetAppointments extends OpenAPIRoute {
 	schema = {
@@ -34,7 +35,7 @@ export class GetAppointments extends OpenAPIRoute {
 		},
 	};
 
-	async handle(c) {
+		async handle(c: Context<{ Bindings: Env }>) {
 		
 		const data = await this.getValidatedData<typeof this.schema>();
 

@@ -2,6 +2,7 @@ import { OpenAPIRoute } from "chanfana";
 import { z } from "zod";
 import { Env } from "../../types/configTypes";
 import { PrioritizeService } from "../../services/priority/prioritizeService";
+import { Context } from "hono"; 
 
 export class GeneratePriority extends OpenAPIRoute { 
     schema = {
@@ -53,7 +54,7 @@ export class GeneratePriority extends OpenAPIRoute {
             },
     };
 
-    async handle(c) {
+    async handle(c: Context<{ Bindings: Env }>) {
 
         const data = await this.getValidatedData<typeof this.schema>();
 
