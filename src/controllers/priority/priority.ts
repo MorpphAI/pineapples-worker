@@ -1,7 +1,7 @@
 import { OpenAPIRoute } from "chanfana";
 import { z } from "zod";
 import { Env } from "../../types/configTypes";
-import { PrioritizeService } from "../../services/priority/prioritizeWithCleanerService";
+import { PrioritizeService } from "../../services/priority/prioritizeService";
 import { Context } from "hono"; 
 
 export class Priority extends OpenAPIRoute { 
