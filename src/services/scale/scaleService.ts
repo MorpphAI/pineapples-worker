@@ -1,26 +1,31 @@
-import { AvantioService } from "./avantioService";
-import { ScheduleRepository } from "../repositories/scheduleRepository";
-import { Env } from "../types/configTypes";
-import { CleaningTask } from "../types/cleanerTypes";
-import { AccommodationStatus, AvantioAccommodation } from "../types/avantioTypes";
-import { AvantioBooking } from "../types/avantioTypes";
-import * as utils from "../utils/scheduleUtils";
+import { AvantioService } from "./../avantio/avantioService";
+import { ScheduleRepository } from "../../repositories/schedule/scheduleRepository";
+import { CleanerRepository } from "../../repositories/cleaner/cleanerRepository";
+import { Env } from "../../types/configTypes";
+import { CleaningTask, CleanerState } from "../../types/cleanerTypes";
+import { AccommodationStatus, AvantioAccommodation } from "../../types/avantioTypes";
+import { AvantioBooking } from "../../types/avantioTypes";
+import * as utils from "../../utils/scheduleUtils";
 
-export class ScheduleService {
+export class ScaleService {
     private avantioService: AvantioService;
     private scheduleRepo: ScheduleRepository;
+    private cleanerRepo: CleanerRepository;
+    private readonly TRAVEL_BUFFER_MINUTES = 30;
+
 
     constructor(env: Env) {
         this.avantioService = new AvantioService(env);
         this.scheduleRepo = new ScheduleRepository(env.DB);
+        this.cleanerRepo = new CleanerRepository(env.DB);
     }
 
     async generateDailySchedule(date: string) {
-        
+
         console.log(`[ScheduleService] Iniciando geração para ${date}`);
-    
+
         const { checkins, checkouts } = await this.fetchAndFilterBookings(date);
-        
+
         const turnoverIds = this.identifyTurnovers(checkins, checkouts);
 
         const idsToClean = this.getAccommodationIdsToClean(checkouts);
@@ -31,7 +36,9 @@ export class ScheduleService {
 
         const prioritizedTasks = this.prioritizeTasks(tasks);
 
-        const runId = await this.scheduleRepo.saveScheduleRun(date, prioritizedTasks);
+        const allocatedTasks = await this.allocateTasksToCleaners(prioritizedTasks);
+
+        const runId = await this.scheduleRepo.saveScheduleRun(date, allocatedTasks);
 
         return { runId, items: prioritizedTasks };
     }
@@ -47,7 +54,7 @@ export class ScheduleService {
         const checkouts = rawCheckouts.filter(b => utils.isValidBookingStatus(b.status));
 
         console.log(`[ScheduleService] Filtrados: ${checkins.length} Check-ins, ${checkouts.length} Check-outs`);
-        
+
         return { checkins, checkouts };
     }
 
@@ -70,27 +77,27 @@ export class ScheduleService {
     }
 
     private async enrichAndBuildTasks(
-        idsToClean: Set<string>, 
-        checkins: AvantioBooking[], 
+        idsToClean: Set<string>,
+        checkins: AvantioBooking[],
         checkouts: AvantioBooking[],
         turnoverIds: Set<string>
     ): Promise<CleaningTask[]> {
-        
+
         const tasks: CleaningTask[] = [];
 
         const fetchAccommodations = Array.from(idsToClean).map(id => this.avantioService.getAccommodation(id));
-        
+
         const accommodations = await Promise.all(fetchAccommodations);
 
         for (const accommodation of accommodations) {
-            
+
             if (!accommodation || accommodation.status === AccommodationStatus.DISABLED) continue;
 
             const zone = utils.extractZoneFromAccommodationName(accommodation.name);
-            
+
             if (!zone) {
                 console.warn(`[ScheduleService] Imóvel ${accommodation.name} ignorado: Zona não identificada.`);
-                continue; 
+                continue;
             }
 
             const bookingIn = checkins.find(b => b.accommodationId === accommodation.id);
@@ -99,8 +106,8 @@ export class ScheduleService {
 
             const isTurnover = turnoverIds.has(accommodation.id);
 
-            const area = accommodation.area?.livingSpace?.amount || 0; 
-            
+            const area = accommodation.area?.livingSpace?.amount || 0;
+
             const effort = utils.calculateCleaningEffort(area);
 
             const address = `${accommodation.location.address}, ${accommodation.location.number} ${accommodation.location.door || ''} - ${accommodation.location.cityName}`;
@@ -111,8 +118,8 @@ export class ScheduleService {
                 accommodationId: accommodation.id,
                 accommodationName: accommodation.name,
                 zone: zone,
-                checkInTime: bookingIn ? bookingIn.stayDates.arrival : null,
-                checkOutTime: bookingOut ? bookingOut.stayDates.departure : null,
+                checkInDate: bookingIn ? bookingIn.stayDates.arrival : null,
+                checkOutDate: bookingOut ? bookingOut.stayDates.departure : null,
                 isTurnover: isTurnover,
                 areaM2: area,
                 address: address,
@@ -125,14 +132,14 @@ export class ScheduleService {
 
     private prioritizeTasks(tasks: CleaningTask[]): CleaningTask[] {
         return tasks.sort((a, b) => {
-            const aHasCheckin = !!a.checkInTime;
-            const bHasCheckin = !!b.checkInTime;
+            const aHasCheckin = !!a.checkInDate;
+            const bHasCheckin = !!b.checkInDate;
 
             if (aHasCheckin && !bHasCheckin) return -1;
             if (!aHasCheckin && bHasCheckin) return 1;
 
             if (a.effort.teamSize !== b.effort.teamSize) {
-                return b.effort.teamSize - a.effort.teamSize; 
+                return b.effort.teamSize - a.effort.teamSize;
             }
 
             if (a.areaM2 !== b.areaM2) {
@@ -141,5 +148,77 @@ export class ScheduleService {
 
             return a.accommodationName.localeCompare(b.accommodationName);
         });
+    }
+
+
+    private async allocateTasksToCleaners(tasks: CleaningTask[]): Promise<CleaningTask[]> {
+
+        const activeCleaners = await this.cleanerRepo.findAllActive();
+        
+        if (!activeCleaners.length) {
+            console.warn("ALERTA: Nenhuma faxineira ativa encontrada!");
+            return tasks; 
+        }
+
+        const cleanersState: CleanerState[] = activeCleaners.map(c => ({
+            ...c,
+            currentAvailableMinutes: utils.timeToMinutes(c.shift_start),
+            shiftEndMinutes: utils.timeToMinutes(c.shift_end),
+            tasksCount: 0
+        }));
+
+        for (const task of tasks) {
+            const requiredPeople = task.effort.teamSize;
+            const duration = task.effort.estimatedMinutes;
+
+            let candidates = cleanersState.filter(c => {
+
+                const zoneMatch = c.zones.toUpperCase().includes(task.zone.toUpperCase());
+                if (!zoneMatch) return false;
+
+                const travelBuffer = c.tasksCount > 0 ? this.TRAVEL_BUFFER_MINUTES : 0;
+                
+                const effectiveStartTime = c.currentAvailableMinutes + travelBuffer;
+                
+                const taskEnd = effectiveStartTime + duration;
+
+                return taskEnd <= c.shiftEndMinutes;
+            });
+
+            candidates.sort((a, b) => {
+                const startA = a.currentAvailableMinutes + (a.tasksCount > 0 ? this.TRAVEL_BUFFER_MINUTES : 0);
+                const startB = b.currentAvailableMinutes + (b.tasksCount > 0 ? this.TRAVEL_BUFFER_MINUTES : 0);
+                return startA - startB;
+            });
+
+            if (candidates.length >= requiredPeople) {
+
+                const selectedTeam = candidates.slice(0, requiredPeople);
+
+                const startMinutes = Math.max(...selectedTeam.map(c => {
+                    const travelBuffer = c.tasksCount > 0 ? this.TRAVEL_BUFFER_MINUTES : 0;
+                    return c.currentAvailableMinutes + travelBuffer;
+                }));
+
+                const endMinutes = startMinutes + duration;
+
+                task.cleanerName = selectedTeam.map(c => c.name).join(" & ");
+                task.startTime = utils.minutesToTime(startMinutes);
+                task.endTime = utils.minutesToTime(endMinutes);
+
+                selectedTeam.forEach(cleaner => {
+                    cleaner.currentAvailableMinutes = endMinutes; 
+                    cleaner.tasksCount++;
+                });
+
+            } else {
+                task.cleanerName = "";
+                task.startTime = "";
+                task.endTime = "";
+                console.warn(`[Alocação] Falha: Tarefa ${task.accommodationName} (${task.zone}) precisa de ${requiredPeople} pessoas.`);
+            }
+        }
+
+        return tasks;
     }
 }

@@ -16,17 +16,26 @@ export interface CleaningEffort {
 }
 
 export interface CleaningTask {
+    cleanerName?: string;
+    startTime?: string;
+    endTime?: string;
     bookingOutId?: string | null;    
     bookingInId?: string | null;
     bookingId?: string;
     accommodationId: string;
     accommodationName: string;
     zone: string;
-    checkInTime: string | null;
-    checkOutTime: string | null; 
+    checkInDate: string | null;
+    checkOutDate: string | null; 
     isTurnover: boolean;
     areaM2: number;
     effort: CleaningEffort;
     priorityScore?: number;
     address: string;
+}
+
+export interface CleanerState extends Cleaner {
+    currentAvailableMinutes: number; 
+    shiftEndMinutes: number;         
+    tasksCount: number;              
 }

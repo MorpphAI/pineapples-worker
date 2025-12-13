@@ -1,6 +1,6 @@
 import { fromHono } from "chanfana";
 import { Hono } from "hono";
-import { AvantioService } from "./services/avantioService";
+import { AvantioService } from "./services/avantio/avantioService";
 import { Env } from "./types/configTypes";
 import { pineapplesRouter } from "./controllers/router";
 

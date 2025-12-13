@@ -1,11 +1,24 @@
 import { D1Database } from "@cloudflare/workers-types";
-import { Cleaner, NewCleaner } from "../types/cleanerTypes";
+import { Cleaner, NewCleaner } from "../../types/cleanerTypes";
 
 export class CleanerRepository {
     private db: D1Database;
 
     constructor(db: D1Database) {
         this.db = db;
+    }
+
+     async findAllActive(): Promise<Cleaner[]> {
+        try {
+            const { results } = await this.db
+                .prepare("SELECT * FROM cleaners WHERE is_active = 1 ORDER BY name ASC")
+                .all<Cleaner>();
+            
+            return results || [];
+        } catch (error) {
+            console.error("[CleanerRepository] Erro ao buscar equipe ativa:", error);
+            return [];
+        }
     }
 
     async CreateCleaners(cleaners: NewCleaner[]): Promise<boolean> {
@@ -26,13 +39,5 @@ export class CleanerRepository {
             console.error("Erro no batch insert:", error);
             throw new Error("Falha ao salvar lista de colaboradores.");
         }
-    }
-
-    async findAllActive(): Promise<Cleaner[]> {
-        const { results } = await this.db
-            .prepare("SELECT * FROM cleaners WHERE is_active = 1 ORDER BY name ASC")
-            .all<Cleaner>();
-        
-        return results;
     }
 }

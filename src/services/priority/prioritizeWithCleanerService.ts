@@ -1,18 +1,22 @@
-import { AvantioService } from "./avantioService";
-import { ScheduleRepository } from "../repositories/scheduleRepository";
-import { Env } from "../types/configTypes";
-import { CleaningTask } from "../types/cleanerTypes";
-import { AccommodationStatus, AvantioAccommodation } from "../types/avantioTypes";
-import { AvantioBooking } from "../types/avantioTypes";
-import * as utils from "../utils/scheduleUtils";
+import { AvantioService } from "../avantio/avantioService";
+import { ScheduleRepository } from "../../repositories/schedule/scheduleRepository";
+import { Env } from "../../types/configTypes";
+import { CleaningTask, CleanerState } from "../../types/cleanerTypes";
+import { CleanerRepository } from "../../repositories/cleaner/cleanerRepository";
+import { AccommodationStatus, AvantioAccommodation } from "../../types/avantioTypes";
+import { AvantioBooking } from "../../types/avantioTypes";
+import * as utils from "../../utils/scheduleUtils";
 
 export class PrioritizeService {
     private avantioService: AvantioService;
     private scheduleRepo: ScheduleRepository;
+    private cleanerRepo: CleanerRepository;
+    private readonly TRAVEL_BUFFER_MINUTES = 30;
 
     constructor(env: Env) {
         this.avantioService = new AvantioService(env);
         this.scheduleRepo = new ScheduleRepository(env.DB);
+        this.cleanerRepo = new CleanerRepository(env.DB);
     }
 
     async generatePriority(date: string) {
@@ -31,7 +35,9 @@ export class PrioritizeService {
 
         const prioritizedTasks = this.prioritizeTasks(tasks);
 
-        return { items: prioritizedTasks };
+        const allocatedTasks = await this.allocateTasksToCleaners(prioritizedTasks);
+
+        return { items: allocatedTasks };
     }
 
 
@@ -109,8 +115,8 @@ export class PrioritizeService {
                 accommodationId: accommodation.id,
                 accommodationName: accommodation.name,
                 zone: zone,
-                checkInTime: bookingIn ? bookingIn.stayDates.arrival : null,
-                checkOutTime: bookingOut ? bookingOut.stayDates.departure : null,
+                checkInDate: bookingIn ? bookingIn.stayDates.arrival : null,
+                checkOutDate: bookingOut ? bookingOut.stayDates.departure : null,
                 isTurnover: isTurnover,
                 areaM2: area,
                 address: address,
@@ -123,8 +129,8 @@ export class PrioritizeService {
 
     private prioritizeTasks(tasks: CleaningTask[]): CleaningTask[] {
         return tasks.sort((a, b) => {
-            const aHasCheckin = !!a.checkInTime;
-            const bHasCheckin = !!b.checkInTime;
+            const aHasCheckin = !!a.checkInDate;
+            const bHasCheckin = !!b.checkInDate;
 
             if (aHasCheckin && !bHasCheckin) return -1;
             if (!aHasCheckin && bHasCheckin) return 1;
@@ -139,5 +145,80 @@ export class PrioritizeService {
 
             return a.accommodationName.localeCompare(b.accommodationName);
         });
+    }
+
+    private async allocateTasksToCleaners(tasks: CleaningTask[]): Promise<CleaningTask[]> {
+    
+            const activeCleaners = await this.cleanerRepo.findAllActive();
+            
+            if (!activeCleaners.length) {
+                console.warn("ALERTA: Nenhuma faxineira ativa encontrada!");
+                return tasks; 
+            }
+    
+            const cleanersState: CleanerState[] = activeCleaners.map(c => ({
+                ...c,
+                currentAvailableMinutes: utils.timeToMinutes(c.shift_start),
+                shiftEndMinutes: utils.timeToMinutes(c.shift_end),
+                tasksCount: 0
+            }));
+    
+            for (const task of tasks) {
+                const requiredPeople = task.effort.teamSize;
+                const duration = task.effort.estimatedMinutes;
+
+                console.log(`--- Tentando Alocar: ${task.accommodationName} (${task.zone}) ---`);
+                console.log(`    Precisa de: ${requiredPeople} pessoa(s) por ${duration} min.`);
+    
+                let candidates = cleanersState.filter(c => {
+    
+                    const zoneMatch = c.zones.toUpperCase().includes(task.zone.toUpperCase());
+                    console.log(`    Faxineira da zona: ${c.zones.toUpperCase()} AP da zona ${task.zone.toUpperCase()}`)
+                    if (!zoneMatch) return false;
+    
+                    const travelBuffer = c.tasksCount > 0 ? this.TRAVEL_BUFFER_MINUTES : 0;
+                    
+                    const effectiveStartTime = c.currentAvailableMinutes + travelBuffer;
+                    
+                    const taskEnd = effectiveStartTime + duration;
+    
+                    return taskEnd <= c.shiftEndMinutes;
+                });
+    
+                candidates.sort((a, b) => {
+                    const startA = a.currentAvailableMinutes + (a.tasksCount > 0 ? this.TRAVEL_BUFFER_MINUTES : 0);
+                    const startB = b.currentAvailableMinutes + (b.tasksCount > 0 ? this.TRAVEL_BUFFER_MINUTES : 0);
+                    return startA - startB;
+                });
+    
+                if (candidates.length >= requiredPeople) {
+    
+                    const selectedTeam = candidates.slice(0, requiredPeople);
+    
+                    const startMinutes = Math.max(...selectedTeam.map(c => {
+                        const travelBuffer = c.tasksCount > 0 ? this.TRAVEL_BUFFER_MINUTES : 0;
+                        return c.currentAvailableMinutes + travelBuffer;
+                    }));
+    
+                    const endMinutes = startMinutes + duration;
+    
+                    task.cleanerName = selectedTeam.map(c => c.name).join(" & ");
+                    task.startTime = utils.minutesToTime(startMinutes);
+                    task.endTime = utils.minutesToTime(endMinutes);
+    
+                    selectedTeam.forEach(cleaner => {
+                        cleaner.currentAvailableMinutes = endMinutes; 
+                        cleaner.tasksCount++;
+                    });
+    
+                } else {
+                    task.cleanerName = "SEM EQUIPE";
+                    task.startTime = "--:--";
+                    task.endTime = "--:--";
+                    console.warn(`[Alocação] Falha: Tarefa ${task.accommodationName} (${task.zone}) precisa de ${requiredPeople} pessoas.`);
+                }
+            }
+    
+        return tasks;
     }
 }
