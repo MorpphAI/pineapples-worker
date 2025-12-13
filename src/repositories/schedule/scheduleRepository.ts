@@ -19,17 +19,18 @@ export class ScheduleRepository {
         if (tasks.length > 0) {
             const stmt = this.db.prepare(`
                 INSERT INTO schedule_items 
-                (run_id, zone, accommodation_code, is_turnover, start_time, end_time, address)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                (run_id, zone, accommodation_code, is_turnover, cleaner_name, start_time, end_time, address)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             `);
 
             const batch = tasks.map(t => stmt.bind(
                 runId,
                 t.zone,
-                t.accommodationName, 
+                t.accommodationName,
                 t.isTurnover ? 1 : 0,
-                t.checkInDate,  
-                t.checkOutDate, 
+                t.cleanerName || "NÃO ALOCADO", 
+                t.startTime || null,            
+                t.endTime || null,              
                 t.address
             ));
 
@@ -37,5 +38,30 @@ export class ScheduleRepository {
         }
 
         return runId;
+    }
+
+    async getScheduleItems(runId: number): Promise<CleaningTask[]> {
+        const { results } = await this.db.prepare(`
+            SELECT 
+                zone, 
+                accommodation_code as accommodationName, 
+                is_turnover as isTurnover,
+                cleaner_name as cleanerName,
+                start_time as startTime,
+                end_time as endTime,
+                address
+            FROM schedule_items 
+            WHERE run_id = ?
+        `).bind(runId).all();
+
+        return results.map((row: any) => ({
+            ...row,
+            isTurnover: row.isTurnover === 1,
+            accommodationId: "",
+            checkInDate: null,
+            checkOutDate: null,
+            areaM2: 0,
+            effort: { teamSize: 1, estimatedMinutes: 0 } 
+        }));
     }
 }
