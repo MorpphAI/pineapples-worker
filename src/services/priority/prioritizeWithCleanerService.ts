@@ -107,7 +107,7 @@ export class PrioritizeService {
             
             const effort = utils.calculateCleaningEffort(area);
 
-            const address = `${accommodation.location.address}, ${accommodation.location.number} ${accommodation.location.door || ''} - ${accommodation.location.cityName}`;
+            const address = `${accommodation.location.addrType === "AVENUE" ? "Av. " : "Rua "}${accommodation.location.address}, Nº ${accommodation.location.number} AP ${accommodation.location.door || ''} - ${accommodation.location.cityName}`;
 
             tasks.push({
                 bookingInId: bookingIn ? bookingIn.id : null,
