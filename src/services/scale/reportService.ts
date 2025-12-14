@@ -1,50 +1,34 @@
-import * as XLSX from "xlsx";
-import { CleaningTask } from "../../types/cleanerTypes";
+import { ScheduleRepository } from "../../repositories/schedule/scheduleRepository";
+import { ExcelService } from "./excelService";
+import { Env } from "../../types/configTypes";
 
 export class ReportService {
-    
-    generateScaleReport(date: string, tasks: CleaningTask[]): string {
+    private scheduleRepo: ScheduleRepository;
+    private excelService: ExcelService;
 
-        const reportData = tasks.map(task => ({
-            "Zona": task.zone,
-            "Código Imóvel": task.accommodationName, 
-            "Tipo": task.isTurnover ? "TURNOVER (Sai/Entra)" : (task.checkInDate ? "CHECK-IN" : "CHECK-OUT"),
-            "Profissional": task.cleanerName || "NÃO ALOCADO",
-            "Início": task.startTime || "--:--",
-            "Fim": task.endTime || "--:--",
-            "Endereço": task.address,
-            "Prioridade": this.getPriorityLabel(task),
-            "Equipe Necessária": task.effort.teamSize === 2 ? "Dupla" : "Individual"
-        }));
-
-        
-        const worksheet = XLSX.utils.json_to_sheet(reportData);
-
-        const columnWidths = [
-            { wch: 10 }, // Zona
-            { wch: 25 }, // Código Imóvel
-            { wch: 20 }, // Tipo
-            { wch: 20 }, // Profissional
-            { wch: 10 }, // Início
-            { wch: 10 }, // Fim
-            { wch: 40 }, // Endereço
-            { wch: 15 }, // Prioridade
-            { wch: 15 }  // Equipe
-        ];
-        worksheet['!cols'] = columnWidths;
-
-        const workbook = XLSX.utils.book_new();
-
-        XLSX.utils.book_append_sheet(workbook, worksheet, "Escala do Dia");
-
-        const excelBase64 = XLSX.write(workbook, { bookType: "xlsx", type: "base64" });
-
-        return excelBase64;
+    constructor(env: Env) {
+        this.scheduleRepo = new ScheduleRepository(env.DB);
+        this.excelService = new ExcelService();
     }
+    
+    async getScaleReportFile(runId: number): Promise<Uint8Array | null> {
 
-    private getPriorityLabel(task: CleaningTask): string {
-        if (task.isTurnover) return "ALTA (Turnover)";
-        if (task.checkInDate) return "MÉDIA (Check-in)";
-        return "NORMAL (Saída)";
+        const tasks = await this.scheduleRepo.getScheduleItems(runId);
+
+        if (!tasks || tasks.length === 0) {
+            return null;
+        }
+
+        const base64 = this.excelService.generateScheduleReport(`Escala #${runId}`, tasks);
+
+        const binaryString = atob(base64);
+        const len = binaryString.length;
+        const bytes = new Uint8Array(len);
+        
+        for (let i = 0; i < len; i++) {
+            bytes[i] = binaryString.charCodeAt(i);
+        }
+
+        return bytes;
     }
 }
