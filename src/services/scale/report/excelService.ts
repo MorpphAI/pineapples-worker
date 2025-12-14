@@ -12,8 +12,7 @@ export class ExcelService {
             "Início": task.startTime || "--:--",
             "Fim": task.endTime || "--:--",
             "Endereço": task.address,
-            "Prioridade": this.getPriorityLabel(task),
-            "Equipe Necessária": task.effort.teamSize === 2 ? "Dupla" : "Individual"
+            "Prioridade": this.getPriorityLabel(task)
         }));
 
         const worksheet = XLSX.utils.json_to_sheet(reportData);
