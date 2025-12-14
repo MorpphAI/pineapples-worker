@@ -21,22 +21,29 @@ export class CleanerRepository {
         }
     }
 
-    async CreateCleaners(cleaners: NewCleaner[]): Promise<boolean> {
+   async createBatch(cleaners: NewCleaner[]): Promise<boolean> {
         if (cleaners.length === 0) return true;
 
         const stmt = this.db.prepare(
-            `INSERT INTO cleaners (name, zones, shift_start, shift_end) VALUES (?, ?, ?, ?)`
+            `INSERT INTO cleaners (name, zones, shift_start, shift_end, fixed_accommodations, is_fixed) VALUES (?, ?, ?, ?, ?, ?)`
         );
 
         const batch = cleaners.map((c) => 
-            stmt.bind(c.name, c.zones, c.shift_start, c.shift_end)
+            stmt.bind(
+                c.name, 
+                c.zones, 
+                c.shift_start, 
+                c.shift_end,
+                c.fixed_accommodations || null,
+                c.is_fixed ? 1 : 0
+            )
         );
 
         try {
             await this.db.batch(batch);
             return true;
         } catch (error) {
-            console.error("Erro no batch insert:", error);
+            console.error("[CleanerRepository] Erro no batch insert:", error);
             throw new Error("Falha ao salvar lista de colaboradores.");
         }
     }
