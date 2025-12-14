@@ -2,7 +2,7 @@ import { OpenAPIRoute } from "chanfana";
 import { z } from "zod";
 import { Context } from "hono";
 import { Env } from "../../types/configTypes";
-import { ReportService } from "../../services/scale/reportService";
+import { ReportService } from "../../services/scale/report/reportService";
 
 export class ExportScale extends OpenAPIRoute {
     schema = {

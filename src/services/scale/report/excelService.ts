@@ -1,5 +1,5 @@
 import * as XLSX from "xlsx";
-import { CleaningTask } from "../../types/cleanerTypes";
+import { CleaningTask } from "../../../types/cleanerTypes";
 
 export class ExcelService {
     

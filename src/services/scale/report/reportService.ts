@@ -1,6 +1,6 @@
-import { ScheduleRepository } from "../../repositories/schedule/scheduleRepository";
+import { ScheduleRepository } from "../../../repositories/schedule/scheduleRepository";
 import { ExcelService } from "./excelService";
-import { Env } from "../../types/configTypes";
+import { Env } from "../../../types/configTypes";
 
 export class ReportService {
     private scheduleRepo: ScheduleRepository;
