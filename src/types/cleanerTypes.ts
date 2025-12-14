@@ -6,6 +6,8 @@ export interface Cleaner {
     shift_end: string;
     is_active: number; 
     created_at: string;
+    fixed_accommodations?: string | null;
+    is_fixed: number;
 }
 
 export type NewCleaner = Omit<Cleaner, "id" | "is_active" | "created_at">;

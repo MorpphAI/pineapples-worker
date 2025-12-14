@@ -110,7 +110,7 @@ export class ScaleService {
 
             const effort = utils.calculateCleaningEffort(area);
 
-            const address = `${accommodation.location.address}, ${accommodation.location.number} ${accommodation.location.door || ''} - ${accommodation.location.cityName}`;
+            const address = `${accommodation.location.addrType === "AVENUE" ? "Av. " : "Rua "}${accommodation.location.address}, Nº ${accommodation.location.number} AP ${accommodation.location.door || ''} - ${accommodation.location.cityName}`;
 
             tasks.push({
                 bookingInId: bookingIn ? bookingIn.id : null,
@@ -152,7 +152,6 @@ export class ScaleService {
 
 
     private async allocateTasksToCleaners(tasks: CleaningTask[]): Promise<CleaningTask[]> {
-
         const activeCleaners = await this.cleanerRepo.findAllActive();
         
         if (!activeCleaners.length) {
@@ -160,29 +159,63 @@ export class ScaleService {
             return tasks; 
         }
 
-        const cleanersState: CleanerState[] = activeCleaners.map(c => ({
+        const allCleanersState: CleanerState[] = activeCleaners.map(c => ({
             ...c,
             currentAvailableMinutes: utils.timeToMinutes(c.shift_start),
             shiftEndMinutes: utils.timeToMinutes(c.shift_end),
             tasksCount: 0
         }));
 
+        const fixedCleaners = allCleanersState.filter(c => c.is_fixed === 1);
+        const generalCleaners = allCleanersState.filter(c => c.is_fixed === 0);
+
+        console.log(`[Alocação] Equipe: ${fixedCleaners.length} Fixas | ${generalCleaners.length} Gerais`);
+
         for (const task of tasks) {
+            if (task.cleanerName) continue;
+
+            const dedicatedCleaner = fixedCleaners.find(c => {
+                if (!c.fixed_accommodations) return false;
+                
+                const fixedList = c.fixed_accommodations.toUpperCase();
+                const accName = task.accommodationName.toUpperCase();
+                return fixedList.includes(accName);
+            });
+
+            if (dedicatedCleaner) {
+                console.log(`    [!] Imóvel Fixo Detectado: ${task.accommodationName} -> ${dedicatedCleaner.name}`);
+                
+                const duration = task.effort.estimatedMinutes;
+                const travelBuffer = dedicatedCleaner.tasksCount > 0 ? this.TRAVEL_BUFFER_MINUTES : 0;
+                const startTime = dedicatedCleaner.currentAvailableMinutes + travelBuffer;
+                
+                if ((startTime + duration) <= dedicatedCleaner.shiftEndMinutes) {
+                    task.cleanerName = dedicatedCleaner.name + " (FIXA)";
+                    task.startTime = utils.minutesToTime(startTime);
+                    task.endTime = utils.minutesToTime(startTime + duration);
+                    
+                    dedicatedCleaner.currentAvailableMinutes = startTime + duration;
+                    dedicatedCleaner.tasksCount++;
+                } else {
+                    console.warn(`    [X] Faxineira fixa ${dedicatedCleaner.name} sem horário para ${task.accommodationName}`);
+                    task.cleanerName = "SEM HORÁRIO (FIXA)"; 
+                }
+            }
+        }
+
+        for (const task of tasks) {
+            if (task.cleanerName) continue;
+
             const requiredPeople = task.effort.teamSize;
             const duration = task.effort.estimatedMinutes;
 
-            let candidates = cleanersState.filter(c => {
-
-                const zoneMatch = c.zones.toUpperCase().includes(task.zone.toUpperCase());
+            let candidates = generalCleaners.filter(c => {
+                const zoneMatch = c.zones.toUpperCase().replace(/\s/g, '').includes(task.zone.toUpperCase().replace(/\s/g, ''));
                 if (!zoneMatch) return false;
 
                 const travelBuffer = c.tasksCount > 0 ? this.TRAVEL_BUFFER_MINUTES : 0;
-                
                 const effectiveStartTime = c.currentAvailableMinutes + travelBuffer;
-                
-                const taskEnd = effectiveStartTime + duration;
-
-                return taskEnd <= c.shiftEndMinutes;
+                return (effectiveStartTime + duration) <= c.shiftEndMinutes;
             });
 
             candidates.sort((a, b) => {
@@ -192,7 +225,6 @@ export class ScaleService {
             });
 
             if (candidates.length >= requiredPeople) {
-
                 const selectedTeam = candidates.slice(0, requiredPeople);
 
                 const startMinutes = Math.max(...selectedTeam.map(c => {
@@ -215,7 +247,7 @@ export class ScaleService {
                 task.cleanerName = "";
                 task.startTime = "";
                 task.endTime = "";
-                console.warn(`[Alocação] Falha: Tarefa ${task.accommodationName} (${task.zone}) precisa de ${requiredPeople} pessoas.`);
+                console.warn(`[Alocação] Falha Geral: Tarefa ${task.accommodationName} (${task.zone})`);
             }
         }
 
