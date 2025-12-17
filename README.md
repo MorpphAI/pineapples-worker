@@ -130,7 +130,9 @@ src/
 
 ### Fazer Deploy para Produção
 
-Para subir a versão final para a Cloudflare:
+Todo codigo que for margeado direto na main já será deployado automaticamente via CI/CD, mas tem como fazer via linha de comando tbm. 
+
+Para subir a versão final para a Cloudflare :
 
 ```bash
 npx wrangler deploy
