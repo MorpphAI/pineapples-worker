@@ -1,4 +1,4 @@
-# Avantio Cleaner Scheduler 🧹
+# Avantio Cleaner Scale 🧹
 
 API Serverless construída com **Cloudflare Workers**, **Hono** e **Chanfana** para automatizar a geração de escalas de limpeza baseadas em check-ins e check-outs da plataforma Avantio.
 
