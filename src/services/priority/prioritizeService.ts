@@ -4,7 +4,7 @@ import { CleaningTask, CleanerState } from "../../types/cleanerTypes";
 import { CleanerRepository } from "../../repositories/cleaner/cleanerRepository";
 import { AccommodationStatus, AvantioAccommodation } from "../../types/avantioTypes";
 import { AvantioBooking } from "../../types/avantioTypes";
-import * as utils from "../../utils/scheduleUtils";
+import * as utils from "../../utils/scaleUtils";
 
 export class PrioritizeService {
     private avantioService: AvantioService;

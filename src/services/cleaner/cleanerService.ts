@@ -9,7 +9,7 @@ export class CleanerService {
         this.repo = new CleanerRepository(env.DB);
     }
 
-    async registerCleanersBatch(cleaners: NewCleaner[]) {
+    async registerCleaners(cleaners: NewCleaner[]) {
         const normalized = cleaners.map(c => ({
             ...c,
             name: c.name.trim().toUpperCase()
@@ -19,6 +19,6 @@ export class CleanerService {
     }
 
     async getActiveTeam() {
-        return this.repo.findAllActive();
+        return this.repo.findAllActive();   
     }
 }

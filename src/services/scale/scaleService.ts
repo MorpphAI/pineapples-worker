@@ -1,22 +1,22 @@
 import { AvantioService } from "./../avantio/avantioService";
-import { ScheduleRepository } from "../../repositories/schedule/scheduleRepository";
+import { ScaleRepository } from "../../repositories/scale/scaleRepository";
 import { CleanerRepository } from "../../repositories/cleaner/cleanerRepository";
 import { Env } from "../../types/configTypes";
 import { CleaningTask, CleanerState } from "../../types/cleanerTypes";
 import { AccommodationStatus, AvantioAccommodation } from "../../types/avantioTypes";
 import { AvantioBooking } from "../../types/avantioTypes";
-import * as utils from "../../utils/scheduleUtils";
+import * as utils from "../../utils/scaleUtils";
 
 export class ScaleService {
     private avantioService: AvantioService;
-    private scheduleRepo: ScheduleRepository;
+    private scheduleRepo: ScaleRepository;
     private cleanerRepo: CleanerRepository;
     private readonly TRAVEL_BUFFER_MINUTES = 30;
 
 
     constructor(env: Env) {
         this.avantioService = new AvantioService(env);
-        this.scheduleRepo = new ScheduleRepository(env.DB);
+        this.scheduleRepo = new ScaleRepository(env.DB);
         this.cleanerRepo = new CleanerRepository(env.DB);
     }
 
