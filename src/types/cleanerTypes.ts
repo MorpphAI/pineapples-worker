@@ -41,3 +41,12 @@ export interface CleanerState extends Cleaner {
     shiftEndMinutes: number;         
     tasksCount: number;              
 }
+
+export interface OffDayScheduleInput {
+    month: string;
+    schedules: {
+        cleanerId: number;
+        offDays: string[];
+        reason?: string;
+    }[];
+}
