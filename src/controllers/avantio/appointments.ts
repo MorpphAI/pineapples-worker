@@ -7,7 +7,7 @@ import { Context } from "hono";
 export class GetAppointments extends OpenAPIRoute {
 	schema = {
 		tags: ["Avantio"],
-		summary: "Disparo Manual: Sincronizar Check-ins e Check-outs",
+		summary: "Disparo Manual: Sincronizar Check-ins e Check-outs sem realizar logica de prioridade, somente para consutas",
 		description: "Esta rota executa a mesma lógica do Cron Job. Use para forçar uma atualização agora.",
 		request: {
 			query: z.object({
