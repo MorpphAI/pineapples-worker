@@ -1,5 +1,6 @@
 import { AvantioService } from "./../avantio/avantioService";
 import { ScaleRepository } from "../../repositories/scale/scaleRepository";
+import { OffDayRepository } from "../../repositories/cleaner/offDayRepository";
 import { CleanerRepository } from "../../repositories/cleaner/cleanerRepository";
 import { Env } from "../../types/configTypes";
 import { CleaningTask, CleanerState } from "../../types/cleanerTypes";
@@ -11,6 +12,7 @@ export class ScaleService {
     private avantioService: AvantioService;
     private scheduleRepo: ScaleRepository;
     private cleanerRepo: CleanerRepository;
+    private offDayRepo: OffDayRepository; 
     private readonly TRAVEL_BUFFER_MINUTES = 30;
 
 
@@ -18,6 +20,7 @@ export class ScaleService {
         this.avantioService = new AvantioService(env);
         this.scheduleRepo = new ScaleRepository(env.DB);
         this.cleanerRepo = new CleanerRepository(env.DB);
+        this.offDayRepo = new OffDayRepository(env.DB);
     }
 
     async generateDailySchedule(date: string) {
@@ -36,7 +39,7 @@ export class ScaleService {
 
         const prioritizedTasks = this.prioritizeTasks(tasks);
 
-        const allocatedTasks = await this.allocateTasksToCleaners(prioritizedTasks);
+        const allocatedTasks = await this.allocateTasksToCleaners(prioritizedTasks, date);
 
         const runId = await this.scheduleRepo.saveScheduleRun(date, allocatedTasks);
 
@@ -151,7 +154,7 @@ export class ScaleService {
     }
 
 
-    private async allocateTasksToCleaners(tasks: CleaningTask[]): Promise<CleaningTask[]> {
+    private async allocateTasksToCleaners(tasks: CleaningTask[], date: string): Promise<CleaningTask[]> {
         const activeCleaners = await this.cleanerRepo.findAllActive();
         
         if (!activeCleaners.length) {
@@ -159,7 +162,18 @@ export class ScaleService {
             return tasks; 
         }
 
-        const allCleanersState: CleanerState[] = activeCleaners.map(c => ({
+        const cleanersOffIds = await this.offDayRepo.getCleanersOffByDate(date);
+
+        const availableCleaners = activeCleaners.filter(c => !cleanersOffIds.includes(c.id));
+        
+        console.log(`[Alocação] Total Ativas: ${activeCleaners.length} | De Folga: ${cleanersOffIds.length} | Disponíveis: ${availableCleaners.length}`);
+
+        if (availableCleaners.length === 0) {
+            console.warn("ALERTA CRÍTICO: Toda a equipe está de folga hoje!");
+            return tasks;
+        }
+
+        const allCleanersState: CleanerState[] = availableCleaners.map(c => ({
             ...c,
             currentAvailableMinutes: utils.timeToMinutes(c.shift_start),
             shiftEndMinutes: utils.timeToMinutes(c.shift_end),
