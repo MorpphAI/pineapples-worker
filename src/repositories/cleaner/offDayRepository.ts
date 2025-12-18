@@ -1,4 +1,5 @@
 import { D1Database } from "@cloudflare/workers-types";
+import { OffDayResult } from "../../types/cleanerTypes";
 import { OffDayScheduleInput } from "../../types/cleanerTypes";
 
 export class OffDayRepository {
@@ -44,5 +45,28 @@ export class OffDayRepository {
         ).bind(date).all<{ cleaner_id: number }>();
 
         return results.map(r => r.cleaner_id);
+    }
+
+    async getOffDaysByMonth(month: string): Promise<OffDayResult[]> {
+        const pattern = `${month}-%`;
+        
+        try {
+            const { results } = await this.db.prepare(`
+                SELECT 
+                    c.id as cleanerId, 
+                    c.name as cleanerName, 
+                    o.date, 
+                    o.reason 
+                FROM cleaner_off_days o
+                JOIN cleaners c ON c.id = o.cleaner_id
+                WHERE o.date LIKE ?
+                ORDER BY o.date ASC, c.name ASC
+            `).bind(pattern).all<OffDayResult>();
+
+            return results || [];
+        } catch (error) {
+            console.error("[OffDayRepository] Erro ao buscar folgas do mês:", error);
+            return [];
+        }
     }
 }

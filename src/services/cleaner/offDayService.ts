@@ -17,4 +17,11 @@ export class OffDayService {
 
         return this.repo.saveMonthlySchedule(data);
     }
+
+    async getMonthlyOffDays(month: string) {
+        if (!/^\d{4}-\d{2}$/.test(month)) {
+            throw new Error("Formato de mês inválido. Use YYYY-MM.");
+        }
+        return this.repo.getOffDaysByMonth(month);
+    }
 }

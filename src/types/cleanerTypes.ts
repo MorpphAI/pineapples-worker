@@ -50,3 +50,10 @@ export interface OffDayScheduleInput {
         reason?: string;
     }[];
 }
+
+export interface OffDayResult {
+    cleanerId: number;
+    cleanerName: string;
+    date: string;
+    reason: string | null;
+}
