@@ -21,7 +21,7 @@ export class CleanerRepository {
         }
     }
 
-   async createBatch(cleaners: NewCleaner[]): Promise<boolean> {
+   async CreateCleaners(cleaners: NewCleaner[]): Promise<boolean> {
         if (cleaners.length === 0) return true;
 
         const stmt = this.db.prepare(

@@ -1,13 +1,13 @@
-import { ScheduleRepository } from "../../../repositories/schedule/scheduleRepository";
+import { ScaleRepository } from "../../../../repositories/scale/scaleRepository";
 import { ExcelService } from "./excelService";
-import { Env } from "../../../types/configTypes";
+import { Env } from "../../../../types/configTypes";
 
 export class ReportService {
-    private scheduleRepo: ScheduleRepository;
+    private scheduleRepo: ScaleRepository;
     private excelService: ExcelService;
 
     constructor(env: Env) {
-        this.scheduleRepo = new ScheduleRepository(env.DB);
+        this.scheduleRepo = new ScaleRepository(env.DB);
         this.excelService = new ExcelService();
     }
     

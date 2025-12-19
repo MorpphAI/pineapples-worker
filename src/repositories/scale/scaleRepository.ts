@@ -1,7 +1,7 @@
 import { D1Database } from "@cloudflare/workers-types";
 import { CleaningTask } from "../../types/cleanerTypes";
 
-export class ScheduleRepository {
+export class ScaleRepository {
     private db: D1Database;
 
     constructor(db: D1Database) {

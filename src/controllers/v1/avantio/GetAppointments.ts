@@ -1,13 +1,13 @@
 import { OpenAPIRoute } from "chanfana";
 import { z } from "zod";
-import { AvantioService } from "../../services/avantio/avantioService";
-import { Env } from "../../types/configTypes";
+import { AvantioService } from "../../../services/v1/avantio/avantioService";
+import { Env } from "../../../types/configTypes";
 import { Context } from "hono";
 
 export class GetAppointments extends OpenAPIRoute {
 	schema = {
 		tags: ["Avantio"],
-		summary: "Disparo Manual: Sincronizar Check-ins e Check-outs",
+		summary: "Disparo Manual: Sincronizar Check-ins e Check-outs sem realizar logica de prioridade, somente para consutas",
 		description: "Esta rota executa a mesma lógica do Cron Job. Use para forçar uma atualização agora.",
 		request: {
 			query: z.object({

@@ -1,8 +1,8 @@
 import { OpenAPIRoute } from "chanfana";
 import { z } from "zod";
 import { Context } from "hono";
-import { Env } from "../../types/configTypes";
-import { CleanerRepository } from "../../repositories/cleaner/cleanerRepository";
+import { Env } from "../../../types/configTypes";
+import { CleanerService } from "../../../services/v1/cleaner/cleanerService";
 
 export class CreateCleaners extends OpenAPIRoute {
 	schema = {
@@ -46,10 +46,11 @@ export class CreateCleaners extends OpenAPIRoute {
 		const data = await this.getValidatedData<typeof this.schema>();
 		const { cleaners } = data.body;
 
-        const repo = new CleanerRepository(c.env.DB);
+        const service = new CleanerService(c.env);
         
         try {
-            await repo.createBatch(cleaners as any);
+			await service.registerCleaners(cleaners as any);
+			
             return c.json({ success: true, count: cleaners.length }, 201);
         } catch (e: any) {
             return c.json({ success: false, error: e.message }, 500);
