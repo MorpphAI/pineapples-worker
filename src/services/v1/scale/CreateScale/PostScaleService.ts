@@ -1,16 +1,16 @@
-import { AvantioService } from "./../avantio/avantioService";
-import { ScaleRepository } from "../../../repositories/scale/scaleRepository";
-import { OffDayRepository } from "../../../repositories/cleaner/offDayRepository";
-import { CleanerRepository } from "../../../repositories/cleaner/cleanerRepository";
-import { Env } from "../../../types/configTypes";
-import { CleaningTask, CleanerState } from "../../../types/cleanerTypes";
-import { AccommodationStatus, AvantioAccommodation } from "../../../types/avantioTypes";
-import { AvantioBooking } from "../../../types/avantioTypes";
-import * as utils from "../../../utils/scaleUtils";
+import { AvantioService } from "../../avantio/avantioService";
+import { ScaleRepository } from "../../../../repositories/scale/scaleRepository";
+import { OffDayRepository } from "../../../../repositories/cleaner/offDayRepository";
+import { CleanerRepository } from "../../../../repositories/cleaner/cleanerRepository";
+import { Env } from "../../../../types/configTypes";
+import { CleaningTask, CleanerState } from "../../../../types/cleanerTypes";
+import { AccommodationStatus, AvantioAccommodation } from "../../../../types/avantioTypes";
+import { AvantioBooking } from "../../../../types/avantioTypes";
+import * as utils from "../../../../utils/scaleUtils";
 
 export class ScaleService {
     private avantioService: AvantioService;
-    private scheduleRepo: ScaleRepository;
+    private scaleRepo: ScaleRepository;
     private cleanerRepo: CleanerRepository;
     private offDayRepo: OffDayRepository; 
     private readonly TRAVEL_BUFFER_MINUTES = 30;
@@ -18,7 +18,7 @@ export class ScaleService {
 
     constructor(env: Env) {
         this.avantioService = new AvantioService(env);
-        this.scheduleRepo = new ScaleRepository(env.DB);
+        this.scaleRepo = new ScaleRepository(env.DB);
         this.cleanerRepo = new CleanerRepository(env.DB);
         this.offDayRepo = new OffDayRepository(env.DB);
     }
@@ -41,7 +41,7 @@ export class ScaleService {
 
         const allocatedTasks = await this.allocateTasksToCleaners(prioritizedTasks, date);
 
-        const runId = await this.scheduleRepo.saveScheduleRun(date, allocatedTasks);
+        const runId = await this.scaleRepo.saveScheduleRun(date, allocatedTasks);
 
         return { runId, items: prioritizedTasks };
     }

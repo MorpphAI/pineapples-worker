@@ -57,3 +57,14 @@ export interface OffDayResult {
     date: string;
     reason: string | null;
 }
+
+export interface CleanerScheduleView {
+    cleanerName: string;
+    tasks: {
+        timeRange: string;
+        accommodation: string;
+        type: string;
+        address: string;
+        zone: string;
+    }[];
+}

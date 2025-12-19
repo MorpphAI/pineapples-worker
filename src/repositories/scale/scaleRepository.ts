@@ -64,4 +64,12 @@ export class ScaleRepository {
             effort: { teamSize: 1, estimatedMinutes: 0 } 
         }));
     }
+
+    async getRunByDate(date: string): Promise<{ id: number, status: string } | null> {
+        const result = await this.db.prepare(
+            `SELECT id, status FROM schedule_runs WHERE target_date = ? ORDER BY id DESC LIMIT 1`
+        ).bind(date).first<{ id: number, status: string }>();
+
+        return result || null;
+    }
 }
