@@ -1,6 +1,6 @@
-import { ScaleRepository } from "../../../repositories/scale/scaleRepository";
+import { ScaleRepository } from "../../../../repositories/scale/scaleRepository";
 import { ExcelService } from "./excelService";
-import { Env } from "../../../types/configTypes";
+import { Env } from "../../../../types/configTypes";
 
 export class ReportService {
     private scheduleRepo: ScaleRepository;

@@ -1,12 +1,12 @@
 import { AvantioService } from "./../avantio/avantioService";
-import { ScaleRepository } from "../../repositories/scale/scaleRepository";
-import { OffDayRepository } from "../../repositories/cleaner/offDayRepository";
-import { CleanerRepository } from "../../repositories/cleaner/cleanerRepository";
-import { Env } from "../../types/configTypes";
-import { CleaningTask, CleanerState } from "../../types/cleanerTypes";
-import { AccommodationStatus, AvantioAccommodation } from "../../types/avantioTypes";
-import { AvantioBooking } from "../../types/avantioTypes";
-import * as utils from "../../utils/scaleUtils";
+import { ScaleRepository } from "../../../repositories/scale/scaleRepository";
+import { OffDayRepository } from "../../../repositories/cleaner/offDayRepository";
+import { CleanerRepository } from "../../../repositories/cleaner/cleanerRepository";
+import { Env } from "../../../types/configTypes";
+import { CleaningTask, CleanerState } from "../../../types/cleanerTypes";
+import { AccommodationStatus, AvantioAccommodation } from "../../../types/avantioTypes";
+import { AvantioBooking } from "../../../types/avantioTypes";
+import * as utils from "../../../utils/scaleUtils";
 
 export class ScaleService {
     private avantioService: AvantioService;

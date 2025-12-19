@@ -1,8 +1,8 @@
 import { OpenAPIRoute } from "chanfana";
 import { z } from "zod";
 import { Context } from "hono";
-import { Env } from "../../types/configTypes";
-import { CleanerService } from "../../services/cleaner/cleanerService";
+import { Env } from "../../../types/configTypes";
+import { CleanerService } from "../../../services/v1/cleaner/cleanerService";
 
 export class CreateCleaners extends OpenAPIRoute {
 	schema = {

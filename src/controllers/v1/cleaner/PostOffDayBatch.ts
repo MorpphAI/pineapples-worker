@@ -1,8 +1,8 @@
 import { OpenAPIRoute } from "chanfana";
 import { z } from "zod";
 import { Context } from "hono";
-import { Env } from "../../types/configTypes";
-import { OffDayService } from "../../services/cleaner/offDayService";
+import { Env } from "../../../types/configTypes";
+import { OffDayService } from "../../../services/v1/cleaner/offDayService";
 
 export class CreateOffDayBatch extends OpenAPIRoute {
     schema = {

@@ -1,13 +1,13 @@
 import { Hono } from "hono";
 import { fromHono } from "chanfana";
-import { GetAppointments } from "./avantio/GetAppointments";
-import { CreateCleaners } from "./cleaner/PostCleaner";
-import { CreateScales } from "./scale/scale";
-import { ExportScale } from "./scale/exportScale"; 
-import { PriorityWithCleaner } from "./priority/GetPriorityCleaner";
-import { Priority } from "./priority/GetPriority";
-import { CreateOffDayBatch } from "./cleaner/PostOffDayBatch";
-import { GetOffDayBatch } from "./cleaner/GetOffDayBatch";
+import { GetAppointments } from "./v1/avantio/GetAppointments";
+import { CreateCleaners } from "./v1/cleaner/PostCleaner";
+import { CreateScales } from "./v1/scale/scale";
+import { ExportScale } from "./v1/scale/exportScale"; 
+import { PriorityWithCleaner } from "./v1/priority/GetPriorityCleaner";
+import { Priority } from "./v1/priority/GetPriority";
+import { CreateOffDayBatch } from "./v1/cleaner/PostOffDayBatch";
+import { GetOffDayBatch } from "./v1/cleaner/GetOffDayBatch";
 import { Env } from "../types/configTypes";
 
 export const pineapplesRouter = fromHono(new Hono<{ Bindings: Env }>());

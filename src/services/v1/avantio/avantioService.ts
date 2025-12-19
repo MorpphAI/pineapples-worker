@@ -1,5 +1,5 @@
-import { Env } from "../../types/configTypes";
-import { AvantioBooking, AvantioResponse, AvantioAccommodation } from "../../types/avantioTypes";
+import { Env } from "../../../types/configTypes";
+import { AvantioBooking, AvantioResponse, AvantioAccommodation } from "../../../types/avantioTypes";
 
 
 export class AvantioService {
