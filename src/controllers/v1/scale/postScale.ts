@@ -1,7 +1,7 @@
 import { OpenAPIRoute } from "chanfana";
 import { z } from "zod";
 import { Env } from "../../../types/configTypes";
-import { ScaleService } from "../../../services/v1/scale/CreateScale/PostScaleService"; 
+import { ScaleService } from "../../../services/v1/scale/createScale/PostScaleService"; 
 import { Context } from "hono"; 
 
 export class CreateScales extends OpenAPIRoute { 
