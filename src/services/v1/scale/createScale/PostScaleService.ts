@@ -43,7 +43,7 @@ export class ScaleService {
 
         const runId = await this.scaleRepo.saveScheduleRun(date, allocatedTasks);
 
-        return { runId, items: prioritizedTasks };
+        return { runId, items: allocatedTasks };
     }
 
 
@@ -153,8 +153,7 @@ export class ScaleService {
         });
     }
 
-
-    private async allocateTasksToCleaners(tasks: CleaningTask[], date: string): Promise<CleaningTask[]> {
+     private async allocateTasksToCleaners(tasks: CleaningTask[], date: string): Promise<CleaningTask[]> {
         const activeCleaners = await this.cleanerRepo.findAllActive();
         
         if (!activeCleaners.length) {
@@ -163,7 +162,6 @@ export class ScaleService {
         }
 
         const cleanersOffIds = await this.offDayRepo.getCleanersOffByDate(date);
-
         const availableCleaners = activeCleaners.filter(c => !cleanersOffIds.includes(c.id));
         
         console.log(`[Alocação] Total Ativas: ${activeCleaners.length} | De Folga: ${cleanersOffIds.length} | Disponíveis: ${availableCleaners.length}`);
@@ -173,58 +171,73 @@ export class ScaleService {
             return tasks;
         }
 
-        const allCleanersState: CleanerState[] = availableCleaners.map(c => ({
+        const cleanersState: CleanerState[] = availableCleaners.map(c => ({
             ...c,
             currentAvailableMinutes: utils.timeToMinutes(c.shift_start),
             shiftEndMinutes: utils.timeToMinutes(c.shift_end),
             tasksCount: 0
         }));
 
-        const fixedCleaners = allCleanersState.filter(c => c.is_fixed === 1);
-        const generalCleaners = allCleanersState.filter(c => c.is_fixed === 0);
+        const fixedCleaners = cleanersState.filter(c => !!c.is_fixed);
+        const generalCleaners = cleanersState.filter(c => !c.is_fixed);
 
-        console.log(`[Alocação] Equipe: ${fixedCleaners.length} Fixas | ${generalCleaners.length} Gerais`);
+        console.log(`[Alocação] Grupos: ${fixedCleaners.length} Fixas | ${generalCleaners.length} Gerais`);
+
+        const finalTaskList: CleaningTask[] = [];
 
         for (const task of tasks) {
-            if (task.cleanerName) continue;
+            let taskHandled = false;
 
             const dedicatedCleaner = fixedCleaners.find(c => {
                 if (!c.fixed_accommodations) return false;
-                
                 const fixedList = c.fixed_accommodations.toUpperCase();
                 const accName = task.accommodationName.toUpperCase();
                 return fixedList.includes(accName);
             });
 
             if (dedicatedCleaner) {
-                console.log(`    [!] Imóvel Fixo Detectado: ${task.accommodationName} -> ${dedicatedCleaner.name}`);
+                console.log(`    [!] Imóvel Fixo: ${task.accommodationName} -> ${dedicatedCleaner.name}`);
                 
                 const duration = task.effort.estimatedMinutes;
                 const travelBuffer = dedicatedCleaner.tasksCount > 0 ? this.TRAVEL_BUFFER_MINUTES : 0;
                 const startTime = dedicatedCleaner.currentAvailableMinutes + travelBuffer;
                 
                 if ((startTime + duration) <= dedicatedCleaner.shiftEndMinutes) {
-                    task.cleanerName = dedicatedCleaner.name + " (FIXA)";
-                    task.startTime = utils.minutesToTime(startTime);
-                    task.endTime = utils.minutesToTime(startTime + duration);
+                    const assignedTask = { ...task };
+                    assignedTask.cleanerName = dedicatedCleaner.name + " (FIXA)";
+                    assignedTask.startTime = utils.minutesToTime(startTime);
+                    assignedTask.endTime = utils.minutesToTime(startTime + duration);
                     
                     dedicatedCleaner.currentAvailableMinutes = startTime + duration;
                     dedicatedCleaner.tasksCount++;
+                    
+                    finalTaskList.push(assignedTask);
+                    taskHandled = true;
                 } else {
-                    console.warn(`    [X] Faxineira fixa ${dedicatedCleaner.name} sem horário para ${task.accommodationName}`);
-                    task.cleanerName = "SEM HORÁRIO (FIXA)"; 
+                    console.warn(`    [X] Fixa ${dedicatedCleaner.name} sem horário.`);
+                    const failedTask = { ...task };
+                    failedTask.cleanerName = "SEM HORÁRIO (FIXA)";
+                    finalTaskList.push(failedTask);
+                    taskHandled = true;
                 }
+            }
+
+            if (!taskHandled) {
+                (task as any)._pending = true;
             }
         }
 
         for (const task of tasks) {
-            if (task.cleanerName) continue;
+            if (!(task as any)._pending) continue;
 
             const requiredPeople = task.effort.teamSize;
             const duration = task.effort.estimatedMinutes;
 
             let candidates = generalCleaners.filter(c => {
-                const zoneMatch = c.zones.toUpperCase().replace(/\s/g, '').includes(task.zone.toUpperCase().replace(/\s/g, ''));
+                const cZone = c.zones.toUpperCase().replace(/\s/g, '');
+                const tZone = task.zone.toUpperCase().replace(/\s/g, '');
+                const zoneMatch = cZone.includes(tZone);
+                
                 if (!zoneMatch) return false;
 
                 const travelBuffer = c.tasksCount > 0 ? this.TRAVEL_BUFFER_MINUTES : 0;
@@ -240,31 +253,35 @@ export class ScaleService {
 
             if (candidates.length >= requiredPeople) {
                 const selectedTeam = candidates.slice(0, requiredPeople);
-
-                const startMinutes = Math.max(...selectedTeam.map(c => {
-                    const travelBuffer = c.tasksCount > 0 ? this.TRAVEL_BUFFER_MINUTES : 0;
-                    return c.currentAvailableMinutes + travelBuffer;
-                }));
-
-                const endMinutes = startMinutes + duration;
-
-                task.cleanerName = selectedTeam.map(c => c.name).join(" & ");
-                task.startTime = utils.minutesToTime(startMinutes);
-                task.endTime = utils.minutesToTime(endMinutes);
+                
+                console.log(`    [V] Alocando ${task.accommodationName} para: ${selectedTeam.map(c => c.name).join(', ')}`);
 
                 selectedTeam.forEach(cleaner => {
-                    cleaner.currentAvailableMinutes = endMinutes; 
+                    const travelBuffer = cleaner.tasksCount > 0 ? this.TRAVEL_BUFFER_MINUTES : 0;
+                    const myStartTime = cleaner.currentAvailableMinutes + travelBuffer;
+                    const myEndTime = myStartTime + duration;
+
+                    const assignedTask = { ...task };
+                    assignedTask.cleanerName = cleaner.name;
+                    assignedTask.startTime = utils.minutesToTime(myStartTime);
+                    assignedTask.endTime = utils.minutesToTime(myEndTime);
+
+                    cleaner.currentAvailableMinutes = myEndTime;
                     cleaner.tasksCount++;
+
+                    finalTaskList.push(assignedTask);
                 });
 
             } else {
-                task.cleanerName = "";
-                task.startTime = "";
-                task.endTime = "";
-                console.warn(`[Alocação] Falha Geral: Tarefa ${task.accommodationName} (${task.zone})`);
+                console.warn(`    [!] Falha Geral: Tarefa ${task.accommodationName} (${task.zone}) - Candidatos: ${candidates.length}/${requiredPeople}`);
+                const failedTask = { ...task };
+                failedTask.cleanerName = "SEM ALOCACAO";
+                failedTask.startTime = "--:--";
+                failedTask.endTime = "--:--";
+                finalTaskList.push(failedTask);
             }
         }
 
-        return tasks;
+        return finalTaskList;
     }
 }
