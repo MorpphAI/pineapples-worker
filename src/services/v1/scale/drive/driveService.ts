@@ -1,11 +1,4 @@
-import { Env } from "../../../../types/configTypes";
-
-export interface DriveUploadResponse {
-    status: "success" | "error";
-    message: string;
-    fileId?: string;
-    fileUrl?: string;
-}
+import { Env, DriveUploadResponse } from "../../../../types/configTypes";
 
 export class DriveService {
     private scriptUrl: string;

@@ -4,3 +4,10 @@ export interface Env {
   GOOGLE_SCRIPT_URL: string; 
   DB: D1Database;
 }
+
+export interface DriveUploadResponse {
+    status: "success" | "error";
+    message: string;
+    fileId?: string;
+    fileUrl?: string;
+}
