@@ -3,7 +3,7 @@
 API Serverless construída com **Cloudflare Workers**, **Hono** e **Chanfana** para automatizar a geração de escalas de limpeza baseadas em check-ins e check-outs da plataforma Avantio.
 
 ---
-
+## para saber com chamar essa api entre (aqui)[https://github.com/MorpphAI/pineapples-worker/blob/main/doc/api-external-doc.md] 
 ## 📋 Sobre o Projeto
 
 O objetivo deste sistema é cruzar dados de reservas da Avantio com a disponibilidade da equipe de limpeza para gerar uma escala diária otimizada.
