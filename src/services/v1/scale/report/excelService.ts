@@ -6,8 +6,9 @@ export class ExcelService {
     generateScheduleReport(date: string, tasks: CleaningTask[]): string {
         const reportData = tasks.map(task => ({
             "Zona": task.zone,
+            "Código Acomodação avantio": task.accommodationId,
             "Código Imóvel": task.accommodationName,
-            "Tipo": task.isTurnover ? "TURNOVER (Sai/Entra)" : (task.checkInDate ? "CHECK-IN" : "CHECK-OUT"),
+            "Tipo": task.isTurnover ? "OutIn" : (task.checkInDate ? "CHECK-IN" : "CHECK-OUT"),
             "Profissional": task.cleanerName || "NÃO ALOCADO",
             "Início": task.startTime || "--:--",
             "Fim": task.endTime || "--:--",
