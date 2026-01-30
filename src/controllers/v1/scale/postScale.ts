@@ -64,8 +64,8 @@ export class CreateScales extends OpenAPIRoute {
             const base64File = excelService.generateScheduleReport(targetDate, result.items);
 
 
-            const driveService = new DriveService(c.env);
-            const driveResult = await driveService.uploadFile(fileName, base64File);
+            // const driveService = new DriveService(c.env);
+            // const driveResult = await driveService.uploadFile(fileName, base64File);
 
             const url = new URL(c.req.url);
             const localDownloadLink = `${url.origin}/v1/scale/${result.runId}/export`;
@@ -77,9 +77,9 @@ export class CreateScales extends OpenAPIRoute {
                 totalTasks: result.items.length,
                 downloadUrl: localDownloadLink,
                 driveUpload: {
-                    status: driveResult.status,
-                    fileUrl: driveResult.fileUrl, 
-                    message: driveResult.message
+                    status: "disabled",
+                    fileUrl: "", 
+                    message: "Drive upload is currently disabled"
                 }
             }, 201);
             
