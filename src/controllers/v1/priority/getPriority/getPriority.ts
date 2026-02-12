@@ -1,7 +1,7 @@
 import { OpenAPIRoute } from "chanfana";
 import { z } from "zod";
 import { Env } from "../../../../types/configTypes";
-import { PrioritizeService } from "../../../../services/v1/priority/prioritizeService";
+import { GetPriorityService } from "../../../../services/v1/priority/getPriority/getPriorityService";
 import { Context } from "hono"; 
 
 export class Priority extends OpenAPIRoute { 
@@ -63,9 +63,9 @@ export class Priority extends OpenAPIRoute {
         const targetDate = data.query.date || today;
 
         try {
-            const prioritizeService = new PrioritizeService(c.env as Env);
+            const getPriorityService = new GetPriorityService(c.env as Env);
 
-            const result = await prioritizeService.generatePriority(targetDate);
+            const result = await getPriorityService.generatePriority(targetDate);
 
             return c.json({
                 status: "success",

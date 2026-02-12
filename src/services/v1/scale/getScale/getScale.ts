@@ -9,7 +9,6 @@ export class GetScaleViewService {
         this.scaleRepo = new ScaleRepository(env.DB);
     }   
 
-
     async getCleanerDailyView(date: string): Promise<CleanerScheduleView[]> {
 
         const run = await this.scaleRepo.getRunByDate(date);

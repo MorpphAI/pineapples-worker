@@ -1,6 +1,6 @@
-import { Env, DriveUploadResponse } from "../../../../types/configTypes";
+import { Env, DriveUploadResponse } from "../../types/configTypes";
 
-export class DriveService {
+export class DriveApiGateways {
     private scriptUrl: string;
 
     constructor(env: Env) {

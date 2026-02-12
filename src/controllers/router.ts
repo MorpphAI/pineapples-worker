@@ -1,11 +1,11 @@
 import { Hono } from "hono";
 import { fromHono } from "chanfana";
-import { GetAppointments } from "./v1/avantio/GetAppointments";
+import { GetAppointments } from "./v1/appointments/GetAppointments/GetAppointments";
 import { CreateCleaners } from "./v1/cleaner/createCleaners/createCleaner";
-import { CreateScales } from "./v1/scale/postScale";
-import { GetScaleView } from "./v1/scale/getScale";
-import { ExportScale } from "./v1/scale/exportScale"; 
-import { PriorityWithCleaner } from "./v1/priority/priorityWithCleaner/priorityWithCleaner";
+import { CreateScales } from "./v1/scale/createScale/CreateScale";
+import { GetScaleView } from "./v1/scale/getScale.ts/getScale";
+import { ExportScale } from "./v1/scale/getScaleExport/exportScale"; 
+import { GetPriorityWithCleaner } from "./v1/priority/getPriorityWithCleaner/getPriorityWithCleaner";
 import { Priority } from "./v1/priority/getPriority/getPriority";
 import { CreateOffDays } from "./v1/cleaner/createOffDays/createOffDays";
 import { GetOffDays } from "./v1/cleaner/getOffDaysByMonth/getOffDays";
@@ -26,4 +26,4 @@ pineapplesRouter.get("/v1/scale", GetScaleView);
 pineapplesRouter.get("/v1/scale/:id/export", ExportScale);
 
 pineapplesRouter.get("/v1/priority", Priority);
-pineapplesRouter.get("/v1/priority/cleaner", PriorityWithCleaner);
+pineapplesRouter.get("/v1/priority/cleaner", GetPriorityWithCleaner);

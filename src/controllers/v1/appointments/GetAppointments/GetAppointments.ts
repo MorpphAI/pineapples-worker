@@ -1,14 +1,14 @@
 import { OpenAPIRoute } from "chanfana";
 import { z } from "zod";
-import { AvantioService } from "../../../services/v1/avantio/avantioService";
-import { Env } from "../../../types/configTypes";
+import { AvantioApiGateway } from "../../../../apiGateways/avantio/getAppointments";
+import { Env } from "../../../../types/configTypes";
 import { Context } from "hono";
 
 export class GetAppointments extends OpenAPIRoute {
 	schema = {
 		tags: ["Avantio"],
 		summary: "Disparo Manual: Sincronizar Check-ins e Check-outs sem realizar logica de prioridade, somente para consutas",
-		description: "Esta rota executa a mesma lógica do Cron Job. Use para forçar uma atualização agora.",
+		description: "Esta rota executa a busca na avation da data atual passada",
 		request: {
 			query: z.object({
 				date: z.string().date().optional().describe("Data específica (YYYY-MM-DD). Se vazio, usa HOJE."),
@@ -39,7 +39,7 @@ export class GetAppointments extends OpenAPIRoute {
 		
 		const data = await this.getValidatedData<typeof this.schema>();
 
-		const service = new AvantioService(c.env as Env);
+		const service = new AvantioApiGateway(c.env as Env);
 		
 		const today = new Date().toISOString().split("T")[0];
 

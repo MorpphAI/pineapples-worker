@@ -1,14 +1,14 @@
 import { OpenAPIRoute } from "chanfana";
 import { z } from "zod";
 import { Env } from "../../../../types/configTypes";
-import { PrioritizeService } from "../../../../services/v1/priority/prioritizeWithCleanerService";
+import { GetPriorityWithCleanerService } from "../../../../services/v1/priority/getPriorityWithCleaner/getPriorityWithCleanerService";
 import { Context } from "hono"; 
 
-export class PriorityWithCleaner extends OpenAPIRoute { 
+export class GetPriorityWithCleaner extends OpenAPIRoute { 
     schema = {
             tags: ["Scales"],
             summary: "Debug: Gerar e Visualizar Prioridade",
-            description: "Gera a lista de tarefas de limpeza do dia e retorna ela ordenada por prioridade, sem salvar no banco.",
+            description: "Gera a lista de tarefas de limpeza do dia e retorna ela ordenada por prioridade, sem salvar no banco, COM A FAXINEIRA ALOCADA para cada tarefa.",
             request: {
                 query: z.object({
                     date: z.string().date().optional().describe("Data específica (YYYY-MM-DD). Se vazio, usa HOJE."),
@@ -63,9 +63,9 @@ export class PriorityWithCleaner extends OpenAPIRoute {
         const targetDate = data.query.date || today;
 
         try {
-            const prioritizeService = new PrioritizeService(c.env as Env);
+            const getPriorityWithCleanerService = new GetPriorityWithCleanerService(c.env as Env);
 
-            const result = await prioritizeService.generatePriority(targetDate);
+            const result = await getPriorityWithCleanerService.generatePriority(targetDate);
 
             return c.json({
                 status: "success",

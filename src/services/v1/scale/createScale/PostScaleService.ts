@@ -1,15 +1,15 @@
-import { AvantioService } from "../../avantio/avantioService";
+import { AvantioApiGateway } from "../../../../apiGateways/avantio/getAppointments";
 import { ScaleRepository } from "../../../../repositories/scale/scaleRepository";
 import { OffDayRepository } from "../../../../repositories/cleaner/offDayRepository";
 import { CleanerRepository } from "../../../../repositories/cleaner/cleanerRepository";
 import { Env } from "../../../../types/configTypes";
 import { CleaningTask, CleanerState } from "../../../../types/cleanerTypes";
-import { AccommodationStatus, AvantioAccommodation } from "../../../../types/avantioTypes";
+import { AccommodationStatus } from "../../../../types/avantioTypes";
 import { AvantioBooking } from "../../../../types/avantioTypes";
 import * as utils from "../../../../utils/scaleUtils";
 
 export class ScaleService {
-    private avantioService: AvantioService;
+    private avantioApiGateway: AvantioApiGateway;
     private scaleRepo: ScaleRepository;
     private cleanerRepo: CleanerRepository;
     private offDayRepo: OffDayRepository; 
@@ -17,7 +17,7 @@ export class ScaleService {
 
 
     constructor(env: Env) {
-        this.avantioService = new AvantioService(env);
+        this.avantioApiGateway = new AvantioApiGateway(env);
         this.scaleRepo = new ScaleRepository(env.DB);
         this.cleanerRepo = new CleanerRepository(env.DB);
         this.offDayRepo = new OffDayRepository(env.DB);
@@ -49,14 +49,14 @@ export class ScaleService {
 
     private async fetchAndFilterBookings(date: string) {
         const [rawCheckins, rawCheckouts] = await Promise.all([
-            this.avantioService.getCheckins(date),
-            this.avantioService.getCheckouts(date)
+            this.avantioApiGateway.getCheckins(date),
+            this.avantioApiGateway.getCheckouts(date)
         ]);
 
         const checkins = rawCheckins.filter(b => utils.isValidBookingStatus(b.status));
         const checkouts = rawCheckouts.filter(b => utils.isValidBookingStatus(b.status));
 
-        console.log(`[ScheduleService] Filtrados: ${checkins.length} Check-ins, ${checkouts.length} Check-outs`);
+        console.log(`[ScaleService] Filtrados: ${checkins.length} Check-ins, ${checkouts.length} Check-outs`);
 
         return { checkins, checkouts };
     }
@@ -88,7 +88,7 @@ export class ScaleService {
 
         const tasks: CleaningTask[] = [];
 
-        const fetchAccommodations = Array.from(idsToClean).map(id => this.avantioService.getAccommodation(id));
+        const fetchAccommodations = Array.from(idsToClean).map(id => this.avantioApiGateway.getAccommodation(id));
 
         const accommodations = await Promise.all(fetchAccommodations);
 
