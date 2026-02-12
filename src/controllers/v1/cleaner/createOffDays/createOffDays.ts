@@ -1,10 +1,10 @@
 import { OpenAPIRoute } from "chanfana";
 import { z } from "zod";
 import { Context } from "hono";
-import { Env } from "../../../types/configTypes";
-import { OffDayService } from "../../../services/v1/cleaner/offDayService";
+import { Env } from "../../../../types/configTypes";
+import { CreateOffDaysService } from "../../../../services/v1/cleaner/createOffDays/createOffDaysService";
 
-export class CreateOffDayBatch extends OpenAPIRoute {
+export class CreateOffDays extends OpenAPIRoute {
     schema = {
         tags: ["Cleaners"],
         summary: "Cadastrar Folgas Mensais",
@@ -53,7 +53,7 @@ export class CreateOffDayBatch extends OpenAPIRoute {
 
     async handle(c: Context<{ Bindings: Env }>) {
         const data = await this.getValidatedData<typeof this.schema>();
-        const service = new OffDayService(c.env);
+        const service = new CreateOffDaysService(c.env);
 
         try {
             await service.registerMonthlyOffDays(data.body);
