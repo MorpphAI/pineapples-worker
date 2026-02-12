@@ -1,8 +1,8 @@
-import { Env } from "../../../types/configTypes";
-import { AvantioBooking, AvantioResponse, AvantioAccommodation } from "../../../types/avantioTypes";
+import { Env } from "../../types/configTypes";
+import { AvantioBooking, AvantioResponse, AvantioAccommodation } from "../../types/avantioTypes";
 
 
-export class AvantioService {
+export class AvantioApiGateway {
 
     private apiKey: string;
     private baseUrl: string;

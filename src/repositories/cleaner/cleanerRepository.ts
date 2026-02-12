@@ -19,6 +19,19 @@ export class CleanerRepository {
             console.error("[CleanerRepository] Erro ao buscar equipe ativa:", error);
             return [];
         }
+     }
+    
+    async findAll(): Promise<Cleaner[]> {
+        try {
+            const { results } = await this.db
+                .prepare("SELECT * FROM cleaners ORDER BY name ASC")
+                .all<Cleaner>();
+            
+            return results || [];
+        } catch (error) {
+            console.error("[CleanerRepository] Erro ao buscar todas:", error);
+            return [];
+        }
     }
 
    async CreateCleaners(cleaners: NewCleaner[]): Promise<boolean> {

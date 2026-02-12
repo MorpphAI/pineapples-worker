@@ -1,8 +1,8 @@
 import { OpenAPIRoute } from "chanfana";
 import { z } from "zod";
 import { Context } from "hono";
-import { Env } from "../../../types/configTypes";
-import { GetScaleViewService } from "../../../services/v1/scale/getScale/getScale";
+import { Env } from "../../../../types/configTypes";
+import { GetScaleViewService } from "../../../../services/v1/scale/getScale/getScale";
 
 export class GetScaleView extends OpenAPIRoute {
     schema = {

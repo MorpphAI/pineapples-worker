@@ -1,27 +1,27 @@
-import { AvantioService } from "../avantio/avantioService";
-import { ScaleRepository } from "../../../repositories/scale/scaleRepository";
-import { Env } from "../../../types/configTypes";
-import { CleaningTask, CleanerState } from "../../../types/cleanerTypes";
-import { CleanerRepository } from "../../../repositories/cleaner/cleanerRepository";
-import { AccommodationStatus, AvantioAccommodation } from "../../../types/avantioTypes";
-import { AvantioBooking } from "../../../types/avantioTypes";
-import * as utils from "../../../utils/scaleUtils";
+import { AvantioApiGateway } from "../../../../apiGateways/avantio/getAppointments";
+import { ScaleRepository } from "../../../../repositories/scale/scaleRepository";
+import { Env } from "../../../../types/configTypes";
+import { CleaningTask, CleanerState } from "../../../../types/cleanerTypes";
+import { CleanerRepository } from "../../../../repositories/cleaner/cleanerRepository";
+import { AccommodationStatus } from "../../../../types/avantioTypes";
+import { AvantioBooking } from "../../../../types/avantioTypes";
+import * as utils from "../../../../utils/scaleUtils";
 
-export class PrioritizeService {
-    private avantioService: AvantioService;
+export class GetPriorityWithCleanerService {
+    private avantioApiGateway: AvantioApiGateway;
     private scheduleRepo: ScaleRepository;
     private cleanerRepo: CleanerRepository;
     private readonly TRAVEL_BUFFER_MINUTES = 30;
 
     constructor(env: Env) {
-        this.avantioService = new AvantioService(env);
+        this.avantioApiGateway = new AvantioApiGateway(env);
         this.scheduleRepo = new ScaleRepository(env.DB);
         this.cleanerRepo = new CleanerRepository(env.DB);
     }
 
     async generatePriority(date: string) {
         
-        console.log(`[ScheduleService] Iniciando geração para ${date}`);
+        console.log(`[GetPriorityWithCleanerService] Iniciando geração para ${date}`);
     
         const { checkins, checkouts } = await this.fetchAndFilterBookings(date);
         
@@ -29,7 +29,7 @@ export class PrioritizeService {
 
         const idsToClean = this.getAccommodationIdsToClean(checkouts);
 
-        console.log(`[ScheduleService] Imóveis para limpar: ${idsToClean.size}`);
+        console.log(`[GetPriorityWithCleanerService] Imóveis para limpar: ${idsToClean.size}`);
 
         const tasks = await this.enrichAndBuildTasks(idsToClean, checkins, checkouts, turnoverIds);
 
@@ -43,14 +43,14 @@ export class PrioritizeService {
 
     private async fetchAndFilterBookings(date: string) {
         const [rawCheckins, rawCheckouts] = await Promise.all([
-            this.avantioService.getCheckins(date),
-            this.avantioService.getCheckouts(date)
+            this.avantioApiGateway.getCheckins(date),
+            this.avantioApiGateway.getCheckouts(date)
         ]);
 
         const checkins = rawCheckins.filter(b => utils.isValidBookingStatus(b.status));
         const checkouts = rawCheckouts.filter(b => utils.isValidBookingStatus(b.status));
 
-        console.log(`[ScheduleService] Filtrados: ${checkins.length} Check-ins, ${checkouts.length} Check-outs`);
+        console.log(`[GetPriorityWithCleanerService] Filtrados: ${checkins.length} Check-ins, ${checkouts.length} Check-outs`);
         
         return { checkins, checkouts };
     }
@@ -82,7 +82,7 @@ export class PrioritizeService {
         
         const tasks: CleaningTask[] = [];
 
-        const fetchAccommodations = Array.from(idsToClean).map(id => this.avantioService.getAccommodation(id));
+        const fetchAccommodations = Array.from(idsToClean).map(id => this.avantioApiGateway.getAccommodation(id));
         
         const accommodations = await Promise.all(fetchAccommodations);
 
@@ -93,7 +93,7 @@ export class PrioritizeService {
             const zone = utils.extractZoneFromAccommodationName(accommodation.name);
             
             if (!zone) {
-                console.warn(`[ScheduleService] Imóvel ${accommodation.name} ignorado: Zona não identificada.`);
+                console.warn(`[GetPriorityWithCleanerService] Imóvel ${accommodation.name} ignorado: Zona não identificada.`);
                 continue; 
             }
 

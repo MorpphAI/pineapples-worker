@@ -1,24 +1,24 @@
-import { AvantioService } from "../avantio/avantioService";
-import { Env } from "../../../types/configTypes";
-import { CleaningTask, CleanerState } from "../../../types/cleanerTypes";
-import { CleanerRepository } from "../../../repositories/cleaner/cleanerRepository";
-import { AccommodationStatus, AvantioAccommodation } from "../../../types/avantioTypes";
-import { AvantioBooking } from "../../../types/avantioTypes";
-import * as utils from "../../../utils/scaleUtils";
+import { AvantioApiGateway } from "../../../../apiGateways/avantio/getAppointments";
+import { Env } from "../../../../types/configTypes";
+import { CleaningTask, CleanerState } from "../../../../types/cleanerTypes";
+import { CleanerRepository } from "../../../../repositories/cleaner/cleanerRepository";
+import { AccommodationStatus } from "../../../../types/avantioTypes";
+import { AvantioBooking } from "../../../../types/avantioTypes";
+import * as utils from "../../../../utils/scaleUtils";
 
-export class PrioritizeService {
-    private avantioService: AvantioService;
+export class GetPriorityService {
+    private avantioApiGateway: AvantioApiGateway;
     private cleanerRepo: CleanerRepository;
     private readonly TRAVEL_BUFFER_MINUTES = 30;
 
     constructor(env: Env) {
-        this.avantioService = new AvantioService(env);
+        this.avantioApiGateway = new AvantioApiGateway(env);
         this.cleanerRepo = new CleanerRepository(env.DB);
     }
 
     async generatePriority(date: string) {
         
-        console.log(`[ScheduleService] Iniciando geração para ${date}`);
+        console.log(`[GetPriorityService] Iniciando geração para ${date}`);
     
         const { checkins, checkouts } = await this.fetchAndFilterBookings(date);
         
@@ -26,7 +26,7 @@ export class PrioritizeService {
 
         const idsToClean = this.getAccommodationIdsToClean(checkouts);
 
-        console.log(`[ScheduleService] Imóveis para limpar: ${idsToClean.size}`);
+        console.log(`[GetPriorityService] Imóveis para limpar: ${idsToClean.size}`);
 
         const tasks = await this.enrichAndBuildTasks(idsToClean, checkins, checkouts, turnoverIds);
 
@@ -38,8 +38,8 @@ export class PrioritizeService {
 
     private async fetchAndFilterBookings(date: string) {
         const [rawCheckins, rawCheckouts] = await Promise.all([
-            this.avantioService.getCheckins(date),
-            this.avantioService.getCheckouts(date)
+            this.avantioApiGateway.getCheckins(date),
+            this.avantioApiGateway.getCheckouts(date)
         ]);
 
         const checkins = rawCheckins.filter(b => utils.isValidBookingStatus(b.status));
@@ -77,7 +77,7 @@ export class PrioritizeService {
         
         const tasks: CleaningTask[] = [];
 
-        const fetchAccommodations = Array.from(idsToClean).map(id => this.avantioService.getAccommodation(id));
+        const fetchAccommodations = Array.from(idsToClean).map(id => this.avantioApiGateway.getAccommodation(id));
         
         const accommodations = await Promise.all(fetchAccommodations);
 

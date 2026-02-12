@@ -1,14 +1,14 @@
 import { ScaleRepository } from "../../../../repositories/scale/scaleRepository";
-import { ExcelService } from "./excelService";
+import { GenerateReport } from "./../../../../utils/generateReport";
 import { Env } from "../../../../types/configTypes";
 
 export class ReportService {
     private scheduleRepo: ScaleRepository;
-    private excelService: ExcelService;
+    private generateReport: GenerateReport;
 
     constructor(env: Env) {
         this.scheduleRepo = new ScaleRepository(env.DB);
-        this.excelService = new ExcelService();
+        this.generateReport = new GenerateReport();
     }
     
     async getScaleReportFile(runId: number): Promise<Uint8Array | null> {
@@ -19,7 +19,7 @@ export class ReportService {
             return null;
         }
 
-        const base64 = this.excelService.generateScheduleReport(`Escala #${runId}`, tasks);
+        const base64 = this.generateReport.generateScheduleReport(`Escala #${runId}`, tasks);
 
         const binaryString = atob(base64);
         const len = binaryString.length;

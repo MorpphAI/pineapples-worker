@@ -1,7 +1,7 @@
 import * as XLSX from "xlsx";
-import { CleaningTask } from "../../../../types/cleanerTypes";
+import { CleaningTask } from "../types/cleanerTypes";
 
-export class ExcelService {
+export class GenerateReport {
     
     generateScheduleReport(date: string, tasks: CleaningTask[]): string {
         const reportData = tasks.map(task => ({
