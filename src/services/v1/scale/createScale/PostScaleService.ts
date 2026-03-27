@@ -171,10 +171,11 @@ export class ScaleService {
             return tasks;
         }
 
+        const LUNCH_BREAK_MINUTES = 60;
         const cleanersState: CleanerState[] = availableCleaners.map(c => ({
             ...c,
             currentAvailableMinutes: utils.timeToMinutes(c.shift_start),
-            shiftEndMinutes: utils.timeToMinutes(c.shift_end),
+            shiftEndMinutes: utils.timeToMinutes(c.shift_end) - LUNCH_BREAK_MINUTES,
             tasksCount: 0
         }));
 

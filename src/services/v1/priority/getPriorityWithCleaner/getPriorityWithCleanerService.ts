@@ -156,10 +156,11 @@ export class GetPriorityWithCleanerService {
                 return tasks; 
             }
     
+            const LUNCH_BREAK_MINUTES = 60;
             const cleanersState: CleanerState[] = activeCleaners.map(c => ({
                 ...c,
                 currentAvailableMinutes: utils.timeToMinutes(c.shift_start),
-                shiftEndMinutes: utils.timeToMinutes(c.shift_end),
+                shiftEndMinutes: utils.timeToMinutes(c.shift_end) - LUNCH_BREAK_MINUTES,
                 tasksCount: 0
             }));
     
