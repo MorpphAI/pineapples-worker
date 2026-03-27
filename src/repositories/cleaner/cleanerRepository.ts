@@ -60,4 +60,18 @@ export class CleanerRepository {
             throw new Error("Falha ao salvar lista de colaboradores.");
         }
     }
+
+    async updateActiveStatus(id: number, isActive: boolean): Promise<boolean> {
+        try {
+            const result = await this.db
+                .prepare("UPDATE cleaners SET is_active = ? WHERE id = ?")
+                .bind(isActive ? 1 : 0, id)
+                .run();
+
+            return result.meta.changes > 0;
+        } catch (error) {
+            console.error("[CleanerRepository] Erro ao atualizar status:", error);
+            throw new Error("Falha ao atualizar status da faxineira.");
+        }
+    }
 }
