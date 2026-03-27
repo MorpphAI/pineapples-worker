@@ -2,8 +2,11 @@ import { fromHono } from "chanfana";
 import { Hono } from "hono";
 import { Env } from "./types/configTypes";
 import { pineapplesRouter } from "./controllers/router";
+import { authMiddleware } from "./middleware/auth";
 
 const app = new Hono<{ Bindings: Env }>();
+
+app.use("*", authMiddleware);
 
 const openapi = fromHono(app, {
 	docs_url: "/", 
