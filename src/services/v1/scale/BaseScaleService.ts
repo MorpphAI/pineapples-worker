@@ -76,6 +76,12 @@ export abstract class BaseScaleService {
             const bookingOut = checkouts.find(b => b.accommodationId === accommodation.id);
             const isTurnover = turnoverIds.has(accommodation.id);
             const area = accommodation.area?.livingSpace?.amount || 0;
+            if (!accommodation.area?.livingSpace?.amount) {
+                console.warn(
+                    `[ALERTA METRAGEM] Imóvel sem área cadastrada: "${accommodation.name}" (ID: ${accommodation.id}). ` +
+                    `Alocando na faixa < 40m² (1 pessoa, 60 min). Verifique o cadastro na Avantio.`
+                );
+            }
             const effort = utils.calculateCleaningEffort(area);
             const address = `${accommodation.location.addrType === "AVENUE" ? "Av. " : "Rua "}${accommodation.location.address}, Nº ${accommodation.location.number} AP ${accommodation.location.door || ''} - ${accommodation.location.cityName}`;
 
