@@ -153,6 +153,18 @@ export class ScaleService {
         });
     }
 
+    private hasLunchBreak(
+        cleaner: CleanerState,
+        taskEndMinutes: number
+    ): boolean {
+        const LUNCH_BREAK = 60;
+        const remainingAfterTask = cleaner.shiftEndMinutes - taskEndMinutes;
+        const alreadyHadBreak = cleaner.tasksCount > 0 &&
+            (cleaner.currentAvailableMinutes - utils.timeToMinutes(cleaner.shift_start))
+            >= LUNCH_BREAK;
+        return remainingAfterTask >= LUNCH_BREAK || alreadyHadBreak;
+    }
+
      private async allocateTasksToCleaners(tasks: CleaningTask[], date: string): Promise<CleaningTask[]> {
         const activeCleaners = await this.cleanerRepo.findAllActive();
         
@@ -243,7 +255,11 @@ export class ScaleService {
 
                 const travelBuffer = c.tasksCount > 0 ? this.TRAVEL_BUFFER_MINUTES : 0;
                 const effectiveStartTime = c.currentAvailableMinutes + travelBuffer;
-                return (effectiveStartTime + duration) <= c.shiftEndMinutes;
+                const taskEnd = effectiveStartTime + duration;
+
+                if (taskEnd > c.shiftEndMinutes) return false;
+                if (!this.hasLunchBreak(c, taskEnd)) return false;
+                return true;
             });
 
             candidates.sort((a, b) => {
@@ -257,21 +273,23 @@ export class ScaleService {
                 
                 console.log(`    [V] Alocando ${task.accommodationName} para: ${selectedTeam.map(c => c.name).join(', ')}`);
 
+                const startMinutes = Math.max(...selectedTeam.map(c => {
+                    const travelBuffer = c.tasksCount > 0 ? this.TRAVEL_BUFFER_MINUTES : 0;
+                    return c.currentAvailableMinutes + travelBuffer;
+                }));
+                const endMinutes = startMinutes + duration;
+
+                const assignedTask = { ...task };
+                assignedTask.cleanerName = selectedTeam.map(c => c.name).join(" & ");
+                assignedTask.startTime = utils.minutesToTime(startMinutes);
+                assignedTask.endTime = utils.minutesToTime(endMinutes);
+
                 selectedTeam.forEach(cleaner => {
-                    const travelBuffer = cleaner.tasksCount > 0 ? this.TRAVEL_BUFFER_MINUTES : 0;
-                    const myStartTime = cleaner.currentAvailableMinutes + travelBuffer;
-                    const myEndTime = myStartTime + duration;
-
-                    const assignedTask = { ...task };
-                    assignedTask.cleanerName = cleaner.name;
-                    assignedTask.startTime = utils.minutesToTime(myStartTime);
-                    assignedTask.endTime = utils.minutesToTime(myEndTime);
-
-                    cleaner.currentAvailableMinutes = myEndTime;
+                    cleaner.currentAvailableMinutes = endMinutes;
                     cleaner.tasksCount++;
-
-                    finalTaskList.push(assignedTask);
                 });
+
+                finalTaskList.push(assignedTask);
 
             } else {
                 console.warn(`    [!] Falha Geral: Tarefa ${task.accommodationName} (${task.zone}) - Candidatos: ${candidates.length}/${requiredPeople}`);
