@@ -82,6 +82,13 @@ export abstract class BaseScaleService {
                 const diffMs = departure.getTime() - arrival.getTime();
                 stayDuration = Math.round(diffMs / (1000 * 60 * 60 * 24));
             }
+            // Parsear coordenadas da Avantio (chegam como strings, podem ser ausentes)
+            const rawCoords = accommodation.location.coordinates;
+            const rawLat = rawCoords?.lat != null ? parseFloat(rawCoords.lat) : null;
+            const rawLon = rawCoords?.lon != null ? parseFloat(rawCoords.lon) : null;
+            const latitude = rawLat != null && !isNaN(rawLat) ? rawLat : null;
+            const longitude = rawLon != null && !isNaN(rawLon) ? rawLon : null;
+
             const area = accommodation.area?.livingSpace?.amount || 0;
             if (!accommodation.area?.livingSpace?.amount) {
                 console.warn(
@@ -89,7 +96,7 @@ export abstract class BaseScaleService {
                     `Alocando na faixa < 40m² (1 pessoa, 60 min). Verifique o cadastro na Avantio.`
                 );
             }
-            const effort = utils.calculateCleaningEffort(area);
+            const effort = utils.calculateCleaningEffort(area, stayDuration);
             const address = `${accommodation.location.addrType === "AVENUE" ? "Av. " : "Rua "}${accommodation.location.address}, Nº ${accommodation.location.number} AP ${accommodation.location.door || ''} - ${accommodation.location.cityName}`;
 
             tasks.push({
@@ -104,7 +111,9 @@ export abstract class BaseScaleService {
                 stayDuration: stayDuration,
                 areaM2: area,
                 address: address,
-                effort: effort
+                effort: effort,
+                latitude: latitude,
+                longitude: longitude,
             });
         }
 
@@ -112,21 +121,34 @@ export abstract class BaseScaleService {
     }
 
     protected prioritizeTasks(tasks: CleaningTask[]): CleaningTask[] {
-        return tasks.sort((a, b) => {
-            const aHasCheckin = !!a.checkInDate;
-            const bHasCheckin = !!b.checkInDate;
+        const scoredTasks = tasks.map(task => {
+            let score = 0;
 
-            if (aHasCheckin && !bHasCheckin) return -1;
-            if (!aHasCheckin && bHasCheckin) return 1;
+            // Turnover sempre prioridade máxima (saída + entrada no mesmo dia)
+            if (task.isTurnover) score += 1000;
 
-            if (a.effort.teamSize !== b.effort.teamSize) {
-                return b.effort.teamSize - a.effort.teamSize;
-            }
+            // Tem check-in hoje — quarto precisa estar pronto para receber
+            if (task.checkInDate) score += 500;
 
-            if (a.areaM2 !== b.areaM2) {
-                return b.areaM2 - a.areaM2;
-            }
+            // Estadia muito longa (> 7 dias) — limpeza mais pesada ainda
+            if (task.stayDuration != null && task.stayDuration > 7) score += 100;
 
+            // Estadia longa (> 4 dias) — acréscimo adicional
+            if (task.stayDuration != null && task.stayDuration > 4) score += 200;
+
+            // Imóvel maior = mais pesado de coordenar (teamSize * 100)
+            score += task.effort.teamSize * 100;
+
+            // Metragem como desempate fino (cada 10m² = 10 pontos)
+            score += Math.floor(task.areaM2 / 10) * 10;
+
+            return { ...task, priorityScore: score };
+        });
+
+        return scoredTasks.sort((a, b) => {
+            const diff = (b.priorityScore ?? 0) - (a.priorityScore ?? 0);
+            if (diff !== 0) return diff;
+            // Desempate determinístico por nome
             return a.accommodationName.localeCompare(b.accommodationName);
         });
     }
@@ -137,11 +159,34 @@ export abstract class BaseScaleService {
         return task.isTurnover ? OUTIN_DEADLINE : CHECKOUT_DEADLINE;
     }
 
-    private getEffectiveStart(cleaner: CleanerState, isFirstTask: boolean): number {
+    private getEffectiveStart(
+        cleaner: CleanerState,
+        isFirstTask: boolean,
+        travelBuffer?: number
+    ): number {
         const LUNCH_BREAK = 60;
+        const buffer = travelBuffer ?? this.TRAVEL_BUFFER_MINUTES;
         if (isFirstTask) return cleaner.currentAvailableMinutes;
-        if (cleaner.lunchBreakTaken) return cleaner.currentAvailableMinutes + this.TRAVEL_BUFFER_MINUTES;
+        if (cleaner.lunchBreakTaken) return cleaner.currentAvailableMinutes + buffer;
         return cleaner.currentAvailableMinutes + LUNCH_BREAK;
+    }
+
+    private getTravelBuffer(cleaner: CleanerState, task: CleaningTask): number {
+        if (
+            cleaner.lastLatitude != null &&
+            cleaner.lastLongitude != null &&
+            task.latitude != null &&
+            task.longitude != null
+        ) {
+            const distKm = utils.haversineDistanceKm(
+                cleaner.lastLatitude,
+                cleaner.lastLongitude,
+                task.latitude,
+                task.longitude
+            );
+            return utils.travelMinutesByDistance(distKm);
+        }
+        return this.TRAVEL_BUFFER_MINUTES; // fallback: 30 min
     }
 
     protected async allocateTasksToCleaners(tasks: CleaningTask[], date: string): Promise<CleaningTask[]> {
@@ -168,7 +213,9 @@ export abstract class BaseScaleService {
             currentAvailableMinutes: utils.timeToMinutes(c.shift_start),
             shiftEndMinutes: utils.timeToMinutes(c.shift_end) - LUNCH_BREAK_MINUTES,
             tasksCount: 0,
-            lunchBreakTaken: false
+            lunchBreakTaken: false,
+            lastLatitude: null,
+            lastLongitude: null,
         }));
 
         const fixedCleaners = cleanersState.filter(c => !!c.is_fixed);
@@ -192,7 +239,8 @@ export abstract class BaseScaleService {
                 console.log(`    [!] Imóvel Fixo: ${task.accommodationName} -> ${dedicatedCleaner.name}`);
 
                 const duration = task.effort.estimatedMinutes;
-                const startTime = this.getEffectiveStart(dedicatedCleaner, dedicatedCleaner.tasksCount === 0);
+                const travelBuf = this.getTravelBuffer(dedicatedCleaner, task);
+                const startTime = this.getEffectiveStart(dedicatedCleaner, dedicatedCleaner.tasksCount === 0, travelBuf);
 
                 const taskDeadline = this.getTaskDeadline(task);
                 const effectiveLimit = Math.min(dedicatedCleaner.shiftEndMinutes, taskDeadline);
@@ -208,6 +256,8 @@ export abstract class BaseScaleService {
                     }
                     dedicatedCleaner.currentAvailableMinutes = startTime + duration;
                     dedicatedCleaner.tasksCount++;
+                    dedicatedCleaner.lastLatitude = task.latitude ?? null;
+                    dedicatedCleaner.lastLongitude = task.longitude ?? null;
 
                     finalTaskList.push(assignedTask);
                     taskHandled = true;
@@ -238,7 +288,8 @@ export abstract class BaseScaleService {
 
                 if (!zoneMatch) return false;
 
-                const effectiveStartTime = this.getEffectiveStart(c, c.tasksCount === 0);
+                const buf = this.getTravelBuffer(c, task);
+                const effectiveStartTime = this.getEffectiveStart(c, c.tasksCount === 0, buf);
                 const taskEnd = effectiveStartTime + duration;
 
                 const taskDeadline = this.getTaskDeadline(task);
@@ -248,8 +299,10 @@ export abstract class BaseScaleService {
             });
 
             candidates.sort((a, b) => {
-                const startA = this.getEffectiveStart(a, a.tasksCount === 0);
-                const startB = this.getEffectiveStart(b, b.tasksCount === 0);
+                const bufA = this.getTravelBuffer(a, task);
+                const bufB = this.getTravelBuffer(b, task);
+                const startA = this.getEffectiveStart(a, a.tasksCount === 0, bufA);
+                const startB = this.getEffectiveStart(b, b.tasksCount === 0, bufB);
                 return startA - startB;
             });
 
@@ -258,7 +311,10 @@ export abstract class BaseScaleService {
 
                 console.log(`    [V] Alocando ${task.accommodationName} para: ${selectedTeam.map(c => c.name).join(', ')}`);
 
-                const startMinutes = Math.max(...selectedTeam.map(c => this.getEffectiveStart(c, c.tasksCount === 0)));
+                const startMinutes = Math.max(...selectedTeam.map(c => {
+                    const buf = this.getTravelBuffer(c, task);
+                    return this.getEffectiveStart(c, c.tasksCount === 0, buf);
+                }));
                 const endMinutes = startMinutes + duration;
 
                 const assignedTask = { ...task };
@@ -273,6 +329,8 @@ export abstract class BaseScaleService {
                     }
                     cleaner.currentAvailableMinutes = endMinutes;
                     cleaner.tasksCount++;
+                    cleaner.lastLatitude = task.latitude ?? null;
+                    cleaner.lastLongitude = task.longitude ?? null;
                 });
 
                 finalTaskList.push(assignedTask);
