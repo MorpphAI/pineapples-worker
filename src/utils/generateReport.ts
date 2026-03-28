@@ -24,7 +24,7 @@ export class GenerateReport {
     private buildSheetData(tasks: CleaningTask[]) {
         return tasks.map(task => ({
             "Zona": task.zone,
-            "Código Acomodação avantio": task.accommodationId,
+            "Código Acomodação avantio": task.accommodationId ? String(task.accommodationId) : '--',
             "Código Imóvel": task.accommodationName,
             "Tipo": task.isTurnover ? "OUT-IN" : (task.checkInDate ? "CHECK-IN" : "CHECK-OUT"),
             "Profissional": task.cleanerName || "NÃO ALOCADO",

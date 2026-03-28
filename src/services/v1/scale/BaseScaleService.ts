@@ -75,12 +75,6 @@ export abstract class BaseScaleService {
             const bookingIn = checkins.find(b => b.accommodationId === accommodation.id);
             const bookingOut = checkouts.find(b => b.accommodationId === accommodation.id);
             const isTurnover = turnoverIds.has(accommodation.id);
-            console.log(`[DEBUG accommodationId] ${accommodation.name} -> id: ${accommodation.id}`);
-            console.log(`[DEBUG stayDuration] accommodationId: ${accommodation.id} | bookingOut:`, JSON.stringify({
-                id: bookingOut?.id,
-                arrival: bookingOut?.stayDates?.arrival,
-                departure: bookingOut?.stayDates?.departure
-            }));
             let stayDuration: number | null = null;
             if (bookingOut?.stayDates?.arrival && bookingOut?.stayDates?.departure) {
                 const arrival = new Date(bookingOut.stayDates.arrival);
