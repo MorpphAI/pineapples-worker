@@ -131,14 +131,11 @@ export abstract class BaseScaleService {
         });
     }
 
-    protected hasLunchBreak(
-        cleaner: CleanerState,
-        effectiveStartTime: number
-    ): boolean {
-        if (cleaner.lunchBreakTaken) return true;
-        if (cleaner.currentAvailableMinutes <= 780) return true; // livre antes das 13:00
-        const gap = effectiveStartTime - cleaner.currentAvailableMinutes;
-        return gap >= 60;
+    private getEffectiveStart(cleaner: CleanerState, isFirstTask: boolean): number {
+        const LUNCH_BREAK = 60;
+        if (isFirstTask) return cleaner.currentAvailableMinutes;
+        if (cleaner.lunchBreakTaken) return cleaner.currentAvailableMinutes + this.TRAVEL_BUFFER_MINUTES;
+        return cleaner.currentAvailableMinutes + LUNCH_BREAK;
     }
 
     protected async allocateTasksToCleaners(tasks: CleaningTask[], date: string): Promise<CleaningTask[]> {
@@ -189,12 +186,7 @@ export abstract class BaseScaleService {
                 console.log(`    [!] Imóvel Fixo: ${task.accommodationName} -> ${dedicatedCleaner.name}`);
 
                 const duration = task.effort.estimatedMinutes;
-                const travelBuffer = dedicatedCleaner.tasksCount > 0 ? this.TRAVEL_BUFFER_MINUTES : 0;
-                const needsLunchGap = !dedicatedCleaner.lunchBreakTaken
-                    && dedicatedCleaner.tasksCount > 0
-                    && dedicatedCleaner.currentAvailableMinutes > 780;
-                const gap = needsLunchGap ? Math.max(travelBuffer, 60) : travelBuffer;
-                const startTime = dedicatedCleaner.currentAvailableMinutes + gap;
+                const startTime = this.getEffectiveStart(dedicatedCleaner, dedicatedCleaner.tasksCount === 0);
 
                 if ((startTime + duration) <= dedicatedCleaner.shiftEndMinutes) {
                     const assignedTask = { ...task };
@@ -202,9 +194,11 @@ export abstract class BaseScaleService {
                     assignedTask.startTime = utils.minutesToTime(startTime);
                     assignedTask.endTime = utils.minutesToTime(startTime + duration);
 
-                    if (needsLunchGap) dedicatedCleaner.lunchBreakTaken = true;
+                    if (!dedicatedCleaner.lunchBreakTaken) {
+                        const pauseUsed = startTime - dedicatedCleaner.currentAvailableMinutes;
+                        if (pauseUsed >= 60) dedicatedCleaner.lunchBreakTaken = true;
+                    }
                     dedicatedCleaner.currentAvailableMinutes = startTime + duration;
-                    if (dedicatedCleaner.currentAvailableMinutes <= 780) dedicatedCleaner.lunchBreakTaken = true;
                     dedicatedCleaner.tasksCount++;
 
                     finalTaskList.push(assignedTask);
@@ -236,24 +230,16 @@ export abstract class BaseScaleService {
 
                 if (!zoneMatch) return false;
 
-                const travelBuffer = c.tasksCount > 0 ? this.TRAVEL_BUFFER_MINUTES : 0;
-                const needsLunchGap = !c.lunchBreakTaken && c.tasksCount > 0 && c.currentAvailableMinutes > 780;
-                const gap = needsLunchGap ? Math.max(travelBuffer, 60) : travelBuffer;
-                const effectiveStartTime = c.currentAvailableMinutes + gap;
+                const effectiveStartTime = this.getEffectiveStart(c, c.tasksCount === 0);
                 const taskEnd = effectiveStartTime + duration;
 
                 if (taskEnd > c.shiftEndMinutes) return false;
-                if (!this.hasLunchBreak(c, effectiveStartTime)) return false;
                 return true;
             });
 
             candidates.sort((a, b) => {
-                const tbA = a.tasksCount > 0 ? this.TRAVEL_BUFFER_MINUTES : 0;
-                const tbB = b.tasksCount > 0 ? this.TRAVEL_BUFFER_MINUTES : 0;
-                const needsLunchA = !a.lunchBreakTaken && a.tasksCount > 0 && a.currentAvailableMinutes > 780;
-                const needsLunchB = !b.lunchBreakTaken && b.tasksCount > 0 && b.currentAvailableMinutes > 780;
-                const startA = a.currentAvailableMinutes + (needsLunchA ? Math.max(tbA, 60) : tbA);
-                const startB = b.currentAvailableMinutes + (needsLunchB ? Math.max(tbB, 60) : tbB);
+                const startA = this.getEffectiveStart(a, a.tasksCount === 0);
+                const startB = this.getEffectiveStart(b, b.tasksCount === 0);
                 return startA - startB;
             });
 
@@ -262,12 +248,7 @@ export abstract class BaseScaleService {
 
                 console.log(`    [V] Alocando ${task.accommodationName} para: ${selectedTeam.map(c => c.name).join(', ')}`);
 
-                const startMinutes = Math.max(...selectedTeam.map(c => {
-                    const travelBuffer = c.tasksCount > 0 ? this.TRAVEL_BUFFER_MINUTES : 0;
-                    const needsLunchGap = !c.lunchBreakTaken && c.tasksCount > 0 && c.currentAvailableMinutes > 780;
-                    const gap = needsLunchGap ? Math.max(travelBuffer, 60) : travelBuffer;
-                    return c.currentAvailableMinutes + gap;
-                }));
+                const startMinutes = Math.max(...selectedTeam.map(c => this.getEffectiveStart(c, c.tasksCount === 0)));
                 const endMinutes = startMinutes + duration;
 
                 const assignedTask = { ...task };
@@ -276,10 +257,11 @@ export abstract class BaseScaleService {
                 assignedTask.endTime = utils.minutesToTime(endMinutes);
 
                 selectedTeam.forEach(cleaner => {
-                    const needsLunchGap = !cleaner.lunchBreakTaken && cleaner.tasksCount > 0 && cleaner.currentAvailableMinutes > 780;
-                    if (needsLunchGap) cleaner.lunchBreakTaken = true;
+                    if (!cleaner.lunchBreakTaken) {
+                        const pauseUsed = startMinutes - cleaner.currentAvailableMinutes;
+                        if (pauseUsed >= 60) cleaner.lunchBreakTaken = true;
+                    }
                     cleaner.currentAvailableMinutes = endMinutes;
-                    if (cleaner.currentAvailableMinutes <= 780) cleaner.lunchBreakTaken = true;
                     cleaner.tasksCount++;
                 });
 
