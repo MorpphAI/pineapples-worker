@@ -18,20 +18,22 @@ export class ScaleRepository {
 
         if (tasks.length > 0) {
             const stmt = this.db.prepare(`
-                INSERT INTO schedule_items 
-                (run_id, zone, accommodation_code, is_turnover, cleaner_name, start_time, end_time, address)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO schedule_items
+                (run_id, zone, accommodation_code, accommodation_id, is_turnover, cleaner_name, start_time, end_time, address, stay_duration)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             `);
 
             const batch = tasks.map(t => stmt.bind(
                 runId,
                 t.zone,
                 t.accommodationName,
+                t.accommodationId || null,
                 t.isTurnover ? 1 : 0,
-                t.cleanerName || "NÃO ALOCADO", 
-                t.startTime || null,            
-                t.endTime || null,              
-                t.address
+                t.cleanerName || "NÃO ALOCADO",
+                t.startTime || null,
+                t.endTime || null,
+                t.address,
+                t.stayDuration ?? null
             ));
 
             await this.db.batch(batch);
@@ -42,26 +44,29 @@ export class ScaleRepository {
 
     async getScheduleItems(runId: number): Promise<CleaningTask[]> {
         const { results } = await this.db.prepare(`
-            SELECT 
-                zone, 
-                accommodation_code as accommodationName, 
+            SELECT
+                zone,
+                accommodation_code as accommodationName,
+                accommodation_id as accommodationId,
                 is_turnover as isTurnover,
                 cleaner_name as cleanerName,
                 start_time as startTime,
                 end_time as endTime,
-                address
-            FROM schedule_items 
+                address,
+                stay_duration as stayDuration
+            FROM schedule_items
             WHERE run_id = ?
         `).bind(runId).all();
 
         return results.map((row: any) => ({
             ...row,
             isTurnover: row.isTurnover === 1,
-            accommodationId: "",
+            accommodationId: row.accommodationId || "",
+            stayDuration: row.stayDuration ?? null,
             checkInDate: null,
             checkOutDate: null,
             areaM2: 0,
-            effort: { teamSize: 1, estimatedMinutes: 0 } 
+            effort: { teamSize: 1, estimatedMinutes: 0 }
         }));
     }
 

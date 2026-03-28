@@ -4,6 +4,7 @@ import { CleaningTask } from "../types/cleanerTypes";
 export class GenerateReport {
 
     generateScheduleReport(date: string, tasks: CleaningTask[]): string {
+        console.log('[DEBUG REPORT] Primeiro task:', JSON.stringify(tasks[0]));
         const zonas = [...new Set(tasks.map(t => t.zone))].sort();
 
         const workbook = XLSX.utils.book_new();
