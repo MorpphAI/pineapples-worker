@@ -38,9 +38,10 @@ export interface CleaningTask {
 }
 
 export interface CleanerState extends Cleaner {
-    currentAvailableMinutes: number; 
-    shiftEndMinutes: number;         
-    tasksCount: number;              
+    currentAvailableMinutes: number;
+    shiftEndMinutes: number;
+    tasksCount: number;
+    lunchBreakTaken: boolean;
 }
 
 export interface OffDayScheduleInput {

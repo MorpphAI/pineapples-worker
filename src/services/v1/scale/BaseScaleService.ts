@@ -133,14 +133,12 @@ export abstract class BaseScaleService {
 
     protected hasLunchBreak(
         cleaner: CleanerState,
-        taskEndMinutes: number
+        effectiveStartTime: number
     ): boolean {
-        const LUNCH_BREAK = 60;
-        const remainingAfterTask = cleaner.shiftEndMinutes - taskEndMinutes;
-        const alreadyHadBreak = cleaner.tasksCount > 0 &&
-            (cleaner.currentAvailableMinutes - utils.timeToMinutes(cleaner.shift_start))
-            >= LUNCH_BREAK;
-        return remainingAfterTask >= LUNCH_BREAK || alreadyHadBreak;
+        if (cleaner.lunchBreakTaken) return true;
+        if (cleaner.currentAvailableMinutes <= 780) return true; // livre antes das 13:00
+        const gap = effectiveStartTime - cleaner.currentAvailableMinutes;
+        return gap >= 60;
     }
 
     protected async allocateTasksToCleaners(tasks: CleaningTask[], date: string): Promise<CleaningTask[]> {
@@ -166,7 +164,8 @@ export abstract class BaseScaleService {
             ...c,
             currentAvailableMinutes: utils.timeToMinutes(c.shift_start),
             shiftEndMinutes: utils.timeToMinutes(c.shift_end) - LUNCH_BREAK_MINUTES,
-            tasksCount: 0
+            tasksCount: 0,
+            lunchBreakTaken: false
         }));
 
         const fixedCleaners = cleanersState.filter(c => !!c.is_fixed);
@@ -191,7 +190,11 @@ export abstract class BaseScaleService {
 
                 const duration = task.effort.estimatedMinutes;
                 const travelBuffer = dedicatedCleaner.tasksCount > 0 ? this.TRAVEL_BUFFER_MINUTES : 0;
-                const startTime = dedicatedCleaner.currentAvailableMinutes + travelBuffer;
+                const needsLunchGap = !dedicatedCleaner.lunchBreakTaken
+                    && dedicatedCleaner.tasksCount > 0
+                    && dedicatedCleaner.currentAvailableMinutes > 780;
+                const gap = needsLunchGap ? Math.max(travelBuffer, 60) : travelBuffer;
+                const startTime = dedicatedCleaner.currentAvailableMinutes + gap;
 
                 if ((startTime + duration) <= dedicatedCleaner.shiftEndMinutes) {
                     const assignedTask = { ...task };
@@ -199,7 +202,9 @@ export abstract class BaseScaleService {
                     assignedTask.startTime = utils.minutesToTime(startTime);
                     assignedTask.endTime = utils.minutesToTime(startTime + duration);
 
+                    if (needsLunchGap) dedicatedCleaner.lunchBreakTaken = true;
                     dedicatedCleaner.currentAvailableMinutes = startTime + duration;
+                    if (dedicatedCleaner.currentAvailableMinutes <= 780) dedicatedCleaner.lunchBreakTaken = true;
                     dedicatedCleaner.tasksCount++;
 
                     finalTaskList.push(assignedTask);
@@ -232,17 +237,23 @@ export abstract class BaseScaleService {
                 if (!zoneMatch) return false;
 
                 const travelBuffer = c.tasksCount > 0 ? this.TRAVEL_BUFFER_MINUTES : 0;
-                const effectiveStartTime = c.currentAvailableMinutes + travelBuffer;
+                const needsLunchGap = !c.lunchBreakTaken && c.tasksCount > 0 && c.currentAvailableMinutes > 780;
+                const gap = needsLunchGap ? Math.max(travelBuffer, 60) : travelBuffer;
+                const effectiveStartTime = c.currentAvailableMinutes + gap;
                 const taskEnd = effectiveStartTime + duration;
 
                 if (taskEnd > c.shiftEndMinutes) return false;
-                if (!this.hasLunchBreak(c, taskEnd)) return false;
+                if (!this.hasLunchBreak(c, effectiveStartTime)) return false;
                 return true;
             });
 
             candidates.sort((a, b) => {
-                const startA = a.currentAvailableMinutes + (a.tasksCount > 0 ? this.TRAVEL_BUFFER_MINUTES : 0);
-                const startB = b.currentAvailableMinutes + (b.tasksCount > 0 ? this.TRAVEL_BUFFER_MINUTES : 0);
+                const tbA = a.tasksCount > 0 ? this.TRAVEL_BUFFER_MINUTES : 0;
+                const tbB = b.tasksCount > 0 ? this.TRAVEL_BUFFER_MINUTES : 0;
+                const needsLunchA = !a.lunchBreakTaken && a.tasksCount > 0 && a.currentAvailableMinutes > 780;
+                const needsLunchB = !b.lunchBreakTaken && b.tasksCount > 0 && b.currentAvailableMinutes > 780;
+                const startA = a.currentAvailableMinutes + (needsLunchA ? Math.max(tbA, 60) : tbA);
+                const startB = b.currentAvailableMinutes + (needsLunchB ? Math.max(tbB, 60) : tbB);
                 return startA - startB;
             });
 
@@ -253,7 +264,9 @@ export abstract class BaseScaleService {
 
                 const startMinutes = Math.max(...selectedTeam.map(c => {
                     const travelBuffer = c.tasksCount > 0 ? this.TRAVEL_BUFFER_MINUTES : 0;
-                    return c.currentAvailableMinutes + travelBuffer;
+                    const needsLunchGap = !c.lunchBreakTaken && c.tasksCount > 0 && c.currentAvailableMinutes > 780;
+                    const gap = needsLunchGap ? Math.max(travelBuffer, 60) : travelBuffer;
+                    return c.currentAvailableMinutes + gap;
                 }));
                 const endMinutes = startMinutes + duration;
 
@@ -263,7 +276,10 @@ export abstract class BaseScaleService {
                 assignedTask.endTime = utils.minutesToTime(endMinutes);
 
                 selectedTeam.forEach(cleaner => {
+                    const needsLunchGap = !cleaner.lunchBreakTaken && cleaner.tasksCount > 0 && cleaner.currentAvailableMinutes > 780;
+                    if (needsLunchGap) cleaner.lunchBreakTaken = true;
                     cleaner.currentAvailableMinutes = endMinutes;
+                    if (cleaner.currentAvailableMinutes <= 780) cleaner.lunchBreakTaken = true;
                     cleaner.tasksCount++;
                 });
 
