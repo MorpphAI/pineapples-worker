@@ -23,18 +23,21 @@ export class GetPriorityWithCleaner extends OpenAPIRoute {
                                 status: z.string(),
                                 count: z.number(),
                                 tasks: z.array(z.object({
-                                    priorityScore: z.number().optional(), 
+                                    priorityScore: z.number().optional(),
                                     accommodationName: z.string(),
                                     zone: z.string(),
                                     isTurnover: z.boolean(),
                                     checkInDate: z.string().nullable(),
                                     checkOutDate: z.string().nullable(),
+                                    stayDuration: z.number().nullable().optional(),
                                     areaM2: z.number(),
                                     effort: z.object({
                                         teamSize: z.number(),
                                         estimatedMinutes: z.number()
                                     }),
-                                    address: z.string()
+                                    address: z.string(),
+                                    latitude: z.number().nullable().optional(),
+                                    longitude: z.number().nullable().optional(),
                                 })),
                             }),
                         },
