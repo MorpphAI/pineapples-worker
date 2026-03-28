@@ -1,10 +1,8 @@
 import { OpenAPIRoute } from "chanfana";
 import { z } from "zod";
 import { Env } from "../../../../types/configTypes";
-import { ScaleService } from "../../../../services/v1/scale/createScale/PostScaleService"; 
-import { GenerateReport } from "../../../../utils/generateReport";
-import { DriveApiGateways } from "../../../../apiGateways/drive/driveService";
-import { Context } from "hono"; 
+import { ScaleService } from "../../../../services/v1/scale/createScale/PostScaleService";
+import { Context } from "hono";
 
 export class CreateScales extends OpenAPIRoute { 
    schema = {
@@ -25,7 +23,6 @@ export class CreateScales extends OpenAPIRoute {
                                 success: z.boolean(),
                                 message: z.string(),
                                 runId: z.number(),
-                                totalTasks: z.number(),
                                 downloadUrl: z.string().describe("Link direto para baixar o Excel")
                             }),
                         },
@@ -57,13 +54,6 @@ export class CreateScales extends OpenAPIRoute {
             
             const scaleService = new ScaleService(c.env);
             const result = await scaleService.generateDailySchedule(targetDate);
-            
-            // const generateReport = new GenerateReport();
-            // const fileName = `Escala_${targetDate}_Run${result.runId}.xlsx`;
-            // const base64File = generateReport.generateScheduleReport(targetDate, result.items);
-
-            // const driveApiGateways = new DriveApiGateways(c.env);
-            // const driveResult = await driveApiGateways.uploadFile(fileName, base64File);
 
             const url = new URL(c.req.url);
             const localDownloadLink = `${url.origin}/v1/scale/${result.runId}/export`;
@@ -72,13 +62,7 @@ export class CreateScales extends OpenAPIRoute {
                 success: true,
                 message: `Escala gerada para o dia ${targetDate}`,
                 runId: result.runId,
-                totalTasks: result.items.length,
                 downloadUrl: localDownloadLink,
-                driveUpload: {
-                    status: "disabled",
-                    fileUrl: "", 
-                    message: "Drive upload is currently disabled"
-                }
             }, 201);
             
         } catch (error: any) {
