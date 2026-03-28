@@ -29,6 +29,7 @@ pnpm cf-typegen
 ```
 AVANTIO_API_KEY=<your_key>
 AVANTIO_BASE_URL=https://api.avantio.pro/pms/v2
+API_KEY=<your_api_key>
 ```
 
 ## Architecture
@@ -41,6 +42,7 @@ Controllers (src/controllers/v1/) → HTTP layer, OpenAPI schema definitions
 Services    (src/services/v1/)    → Business logic, scheduling algorithm
 Repositories(src/repositories/)  → D1 database access
 API Gateways(src/apiGateways/)   → External API integrations (Avantio)
+Middleware  (src/middleware/)     → Cross-cutting concerns (auth)
 Utils       (src/utils/)         → Pure functions (calculations, formatting)
 Types       (src/types/)         → TypeScript interfaces and enums
 ```
@@ -53,11 +55,12 @@ Types       (src/types/)         → TypeScript interfaces and enums
 - **Services** receive `Env` via constructor and instantiate their own repositories/gateways.
 - **Repositories** wrap D1 prepared statements; use `.batch()` for bulk inserts.
 - **API Gateways** handle pagination and external HTTP calls; `AvantioApiGateway` auto-paginates.
+- **Middleware** applied globally via `app.use("*", ...)` before route registration.
 
 ## Database (Cloudflare D1)
 
 Migrations live in `migrations/`. Key tables:
-- `cleaners` — cleaner config (zones, shift times, fixed accommodations)
+- `cleaners` — cleaner config (zones, shift times, fixed accommodations, is_active flag)
 - `cleaner_off_days` — per-month off-day records
 - `schedule_runs` — one row per schedule generation execution
 - `schedule_items` — individual task assignments per run (FK → schedule_runs, CASCADE DELETE)
@@ -71,6 +74,7 @@ Migrations live in `migrations/`. Key tables:
 4. Prioritize: turnovers > check-ins > checkouts, then by team size, then by area
 5. Allocate: fixed cleaners first → then general cleaners by zone match
 6. Apply 30-min travel buffer between tasks; respect shift windows
+7. Deduct 60-min lunch break from each cleaner's effective shift end
 
 **Cleaning effort table** (`src/utils/scaleUtils.ts`):
 - <40m²: 1 person, 60 min | 40–70m²: 1 person, 90 min
@@ -88,13 +92,28 @@ Migrations live in `migrations/`. Key tables:
 | GET | `/v1/appointments` | Fetch Avantio check-ins/outs |
 | POST | `/v1/cleaner` | Bulk create cleaners |
 | GET | `/v1/cleaner` | List all cleaners |
+| PATCH | `/v1/cleaner/:id` | Activate/deactivate a cleaner |
 | POST | `/v1/cleaner/offdays` | Register monthly off-days |
 | GET | `/v1/cleaner/offdays` | Query off-days by month |
 | GET | `/v1/priority` | Priority scores for tasks |
 | GET | `/v1/priority/cleaner` | Priorities with cleaner assignments |
 
+## Authentication
+
+All endpoints are protected by an API key middleware (`src/middleware/auth.ts`). Every request must include:
+
+```
+x-api-key: <API_KEY>
+```
+
+The key is stored as a Cloudflare secret (`API_KEY`). Requests without a valid key return `401 Unauthorized`.
+
+To add the secret in production:
+```bash
+npx wrangler secret put API_KEY
+```
+
 ## Notes
 
 - **Google Drive upload** is disabled — `DriveService` is a stub returning "disabled".
-- **No authentication** on any endpoint currently.
 - OpenAPI/Swagger docs auto-generated at `/`.

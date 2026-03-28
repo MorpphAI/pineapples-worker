@@ -3,7 +3,7 @@
 API Serverless construída com **Cloudflare Workers**, **Hono** e **Chanfana** para automatizar a geração de escalas de limpeza baseadas em check-ins e check-outs da plataforma Avantio.
 
 ---
-## para saber com chamar essa api entre [aqui](https://github.com/MorpphAI/pineapples-worker/blob/main/doc/api-external-doc.md) 
+## para saber como chamar essa api entre [aqui](https://github.com/MorpphAI/pineapples-worker/blob/main/doc/api-external-doc.md)
 
 ## 📋 Sobre o Projeto
 
@@ -15,6 +15,18 @@ O objetivo deste sistema é cruzar dados de reservas da Avantio com a disponibil
 2. **Entrada 2:** Busca a lista de camareiras ativas e suas zonas de atuação no banco D1
 3. **Processamento:** Cruza os dados identificando prioridades (ex: Turnover/Bate-volta)
 4. **Saída:** Gera e salva a escala de limpeza no banco de dados
+
+---
+
+## 🔐 Autenticação
+
+Todos os endpoints são protegidos por API Key. Inclua o header abaixo em todas as requisições:
+
+```
+x-api-key: SUA_CHAVE_AQUI
+```
+
+Requisições sem o header ou com chave inválida retornam `401 Unauthorized`.
 
 ---
 
@@ -38,6 +50,7 @@ Crie um arquivo `.dev.vars` na raiz do projeto (não comite este arquivo) com as
 ```env
 AVANTIO_API_KEY=sua_chave_aqui
 AVANTIO_BASE_URL=https://api.avantio.pro/pms/v2
+API_KEY=sua_api_key_local
 ```
 
 ### 3. Executando Localmente
@@ -109,16 +122,19 @@ O projeto segue o padrão de camadas (Layered Architecture):
 
 ```
 src/
-├── index.ts                    # Ponto de entrada (Hono, Swagger, Cron Job)
-├── controllers/                # Controladores das rotas (GET, POST)
+├── index.ts                    # Ponto de entrada (Hono, Swagger, middleware)
+├── middleware/                 # Middlewares globais
+│   └── auth.ts                # Autenticação por API Key (x-api-key)
+├── controllers/                # Controladores das rotas (HTTP + OpenAPI schema)
 │   ├── router.ts
-│   ├── avantio/               # Rotas de sincronização
-│   └── cleaner/               # Gestão da equipe
+│   └── v1/
+│       ├── cleaner/            # Gestão da equipe (criar, listar, status, folgas)
+│       ├── scale/              # Geração e consulta de escala
+│       ├── priority/           # Visualização de prioridades
+│       └── appointments/       # Sincronização com Avantio
 ├── services/                   # Regras de negócio e lógica pesada
-│   ├── avantioService.ts
-│   └── cleanerService.ts
 ├── repositories/               # Acesso direto ao banco de dados (SQL)
-│   └── cleanerRepository.ts
+├── apiGateways/                # Integração com APIs externas (Avantio)
 └── types/                      # Interfaces TypeScript e Variáveis de Ambiente
     ├── avantioTypes.ts
     ├── cleanerTypes.ts
@@ -131,17 +147,22 @@ src/
 
 ### Fazer Deploy para Produção
 
-Todo codigo que for margeado direto na main já será deployado automaticamente via CI/CD, mas tem como fazer via linha de comando tbm. 
+Todo código mergeado na `main` é deployado automaticamente via CI/CD no Cloudflare.
 
-Para subir a versão final para a Cloudflare :
+Para subir manualmente:
 
 ```bash
 npx wrangler deploy
 ```
 
-### Ver Logs em Tempo Real
+### Adicionar/Atualizar Secrets de Produção
 
-Para monitorar os logs do servidor de produção:
+```bash
+npx wrangler secret put API_KEY
+npx wrangler secret put AVANTIO_API_KEY
+```
+
+### Ver Logs em Tempo Real
 
 ```bash
 npx wrangler tail
