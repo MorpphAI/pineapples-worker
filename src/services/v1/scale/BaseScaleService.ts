@@ -131,6 +131,12 @@ export abstract class BaseScaleService {
         });
     }
 
+    private getTaskDeadline(task: CleaningTask): number {
+        const OUTIN_DEADLINE = 15 * 60;
+        const CHECKOUT_DEADLINE = 17 * 60 + 50;
+        return task.isTurnover ? OUTIN_DEADLINE : CHECKOUT_DEADLINE;
+    }
+
     private getEffectiveStart(cleaner: CleanerState, isFirstTask: boolean): number {
         const LUNCH_BREAK = 60;
         if (isFirstTask) return cleaner.currentAvailableMinutes;
@@ -188,7 +194,9 @@ export abstract class BaseScaleService {
                 const duration = task.effort.estimatedMinutes;
                 const startTime = this.getEffectiveStart(dedicatedCleaner, dedicatedCleaner.tasksCount === 0);
 
-                if ((startTime + duration) <= dedicatedCleaner.shiftEndMinutes) {
+                const taskDeadline = this.getTaskDeadline(task);
+                const effectiveLimit = Math.min(dedicatedCleaner.shiftEndMinutes, taskDeadline);
+                if ((startTime + duration) <= effectiveLimit) {
                     const assignedTask = { ...task };
                     assignedTask.cleanerName = dedicatedCleaner.name + " (FIXA)";
                     assignedTask.startTime = utils.minutesToTime(startTime);
@@ -233,7 +241,9 @@ export abstract class BaseScaleService {
                 const effectiveStartTime = this.getEffectiveStart(c, c.tasksCount === 0);
                 const taskEnd = effectiveStartTime + duration;
 
-                if (taskEnd > c.shiftEndMinutes) return false;
+                const taskDeadline = this.getTaskDeadline(task);
+                const effectiveLimit = Math.min(c.shiftEndMinutes, taskDeadline);
+                if (taskEnd > effectiveLimit) return false;
                 return true;
             });
 
@@ -268,7 +278,8 @@ export abstract class BaseScaleService {
                 finalTaskList.push(assignedTask);
 
             } else {
-                console.warn(`    [!] Falha Geral: Tarefa ${task.accommodationName} (${task.zone}) - Candidatos: ${candidates.length}/${requiredPeople}`);
+                const deadline = utils.minutesToTime(this.getTaskDeadline(task));
+                console.warn(`    [!] Falha Geral: ${task.accommodationName} (${task.zone}) - deadline ${deadline} - Candidatos: ${candidates.length}/${requiredPeople}`);
                 const failedTask = { ...task };
                 failedTask.cleanerName = "SEM ALOCACAO";
                 failedTask.startTime = "--:--";
