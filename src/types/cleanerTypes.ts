@@ -4,7 +4,7 @@ export interface Cleaner {
     zones: string;
     shift_start: string;
     shift_end: string;
-    is_active: number; 
+    is_active: number;
     created_at: string;
     fixed_accommodations?: string | null;
     is_fixed: number;
@@ -13,7 +13,7 @@ export interface Cleaner {
 export type NewCleaner = Omit<Cleaner, "id" | "is_active" | "created_at">;
 
 export interface CleaningEffort {
-    teamSize: 1 | 2;
+    teamSize: 1 | 2 | 3;
     estimatedMinutes: number;
 }
 
@@ -21,20 +21,22 @@ export interface CleaningTask {
     cleanerName?: string;
     startTime?: string;
     endTime?: string;
-    bookingOutId?: string | null;    
+    bookingOutId?: string | null;
     bookingInId?: string | null;
     bookingId?: string;
     accommodationId: string;
     accommodationName: string;
     zone: string;
     checkInDate: string | null;
-    checkOutDate: string | null; 
+    checkOutDate: string | null;
     isTurnover: boolean;
     stayDuration: number | null;
     areaM2: number;
     effort: CleaningEffort;
     priorityScore?: number;
     address: string;
+    latitude?: number | null;
+    longitude?: number | null;
 }
 
 export interface CleanerState extends Cleaner {
@@ -42,6 +44,8 @@ export interface CleanerState extends Cleaner {
     shiftEndMinutes: number;
     tasksCount: number;
     lunchBreakTaken: boolean;
+    lastLatitude?: number | null;
+    lastLongitude?: number | null;
 }
 
 export interface OffDayScheduleInput {
