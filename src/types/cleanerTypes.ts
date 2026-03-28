@@ -30,6 +30,7 @@ export interface CleaningTask {
     checkInDate: string | null;
     checkOutDate: string | null; 
     isTurnover: boolean;
+    stayDuration: number | null;
     areaM2: number;
     effort: CleaningEffort;
     priorityScore?: number;

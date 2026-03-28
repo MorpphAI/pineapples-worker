@@ -12,6 +12,7 @@ export class GenerateReport {
             "Profissional": task.cleanerName || "NÃO ALOCADO",
             "Início": task.startTime || "--:--",
             "Fim": task.endTime || "--:--",
+            "Estadia (dias)": task.stayDuration !== null ? task.stayDuration : "--",
             "Endereço": task.address,
             "Prioridade": this.getPriorityLabel(task)
         }));
@@ -25,9 +26,10 @@ export class GenerateReport {
             { wch: 20 },
             { wch: 10 },
             { wch: 10 },
+            { wch: 15 },
             { wch: 40 },
             { wch: 15 },
-            { wch: 15 } 
+            { wch: 15 }
         ];
         worksheet['!cols'] = columnWidths;
 

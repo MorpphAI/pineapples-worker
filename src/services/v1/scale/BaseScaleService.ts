@@ -75,6 +75,13 @@ export abstract class BaseScaleService {
             const bookingIn = checkins.find(b => b.accommodationId === accommodation.id);
             const bookingOut = checkouts.find(b => b.accommodationId === accommodation.id);
             const isTurnover = turnoverIds.has(accommodation.id);
+            let stayDuration: number | null = null;
+            if (bookingOut?.stayDates?.arrival && bookingOut?.stayDates?.departure) {
+                const arrival = new Date(bookingOut.stayDates.arrival);
+                const departure = new Date(bookingOut.stayDates.departure);
+                const diffMs = departure.getTime() - arrival.getTime();
+                stayDuration = Math.round(diffMs / (1000 * 60 * 60 * 24));
+            }
             const area = accommodation.area?.livingSpace?.amount || 0;
             if (!accommodation.area?.livingSpace?.amount) {
                 console.warn(
@@ -94,6 +101,7 @@ export abstract class BaseScaleService {
                 checkInDate: bookingIn ? bookingIn.stayDates.arrival : null,
                 checkOutDate: bookingOut ? bookingOut.stayDates.departure : null,
                 isTurnover: isTurnover,
+                stayDuration: stayDuration,
                 areaM2: area,
                 address: address,
                 effort: effort
