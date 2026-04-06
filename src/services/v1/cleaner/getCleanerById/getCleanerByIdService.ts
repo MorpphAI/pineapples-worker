@@ -1,15 +1,15 @@
 import { CleanerRepository } from "../../../../repositories/cleaner/cleanerRepository";
 import { Env } from "../../../../types/configTypes";
-import { UpdateCleanerFields } from "../../../../types/cleanerTypes";
+import { Cleaner } from "../../../../types/cleanerTypes";
 
-export class UpdateCleanerService {
+export class GetCleanerByIdService {
     private repo: CleanerRepository;
 
     constructor(env: Env) {
         this.repo = new CleanerRepository(env.DB);
     }
 
-    async update(id: number, fields: UpdateCleanerFields): Promise<boolean> {
-        return this.repo.updateCleaner(id, fields);
+    async getById(id: number): Promise<Cleaner | null> {
+        return this.repo.findById(id);
     }
 }

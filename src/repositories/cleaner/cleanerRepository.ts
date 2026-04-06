@@ -1,11 +1,51 @@
 import { D1Database } from "@cloudflare/workers-types";
-import { Cleaner, NewCleaner } from "../../types/cleanerTypes";
+import { Cleaner, NewCleaner, UpdateCleanerFields } from "../../types/cleanerTypes";
 
 export class CleanerRepository {
     private db: D1Database;
 
     constructor(db: D1Database) {
         this.db = db;
+    }
+
+    async findById(id: number): Promise<Cleaner | null> {
+        try {
+            const result = await this.db
+                .prepare("SELECT * FROM cleaners WHERE id = ?")
+                .bind(id)
+                .first<Cleaner>();
+            return result || null;
+        } catch (error) {
+            console.error("[CleanerRepository] Erro ao buscar faxineira por ID:", error);
+            return null;
+        }
+    }
+
+    async updateCleaner(id: number, fields: UpdateCleanerFields): Promise<boolean> {
+        const setClauses: string[] = [];
+        const values: any[] = [];
+
+        if (fields.name !== undefined) { setClauses.push("name = ?"); values.push(fields.name); }
+        if (fields.zones !== undefined) { setClauses.push("zones = ?"); values.push(fields.zones); }
+        if (fields.shift_start !== undefined) { setClauses.push("shift_start = ?"); values.push(fields.shift_start); }
+        if (fields.shift_end !== undefined) { setClauses.push("shift_end = ?"); values.push(fields.shift_end); }
+        if (fields.fixed_accommodations !== undefined) { setClauses.push("fixed_accommodations = ?"); values.push(fields.fixed_accommodations); }
+        if (fields.is_fixed !== undefined) { setClauses.push("is_fixed = ?"); values.push(fields.is_fixed ? 1 : 0); }
+        if (fields.is_active !== undefined) { setClauses.push("is_active = ?"); values.push(fields.is_active ? 1 : 0); }
+
+        if (setClauses.length === 0) return false;
+
+        values.push(id);
+        try {
+            const result = await this.db
+                .prepare(`UPDATE cleaners SET ${setClauses.join(", ")} WHERE id = ?`)
+                .bind(...values)
+                .run();
+            return result.meta.changes > 0;
+        } catch (error) {
+            console.error("[CleanerRepository] Erro ao atualizar faxineira:", error);
+            throw new Error("Falha ao atualizar faxineira.");
+        }
     }
 
      async findAllActive(): Promise<Cleaner[]> {
@@ -72,6 +112,20 @@ export class CleanerRepository {
         } catch (error) {
             console.error("[CleanerRepository] Erro ao atualizar status:", error);
             throw new Error("Falha ao atualizar status da faxineira.");
+        }
+    }
+
+    async deleteById(id: number): Promise<boolean> {
+        try {
+            const result = await this.db
+                .prepare("DELETE FROM cleaners WHERE id = ?")
+                .bind(id)
+                .run();
+
+            return result.meta.changes > 0;
+        } catch (error) {
+            console.error("[CleanerRepository] Erro ao deletar faxineira:", error);
+            throw new Error("Falha ao deletar faxineira.");
         }
     }
 }

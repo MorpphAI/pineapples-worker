@@ -7,8 +7,8 @@ import { UpdateCleanerService } from "../../../../services/v1/cleaner/updateClea
 export class UpdateCleaner extends OpenAPIRoute {
     schema = {
         tags: ["Cleaners"],
-        summary: "Ativar ou inativar faxineira",
-        description: "Atualiza o status de ativação de uma faxineira pelo ID.",
+        summary: "Atualizar faxineira",
+        description: "Atualiza um ou mais campos de uma faxineira pelo ID. Todos os campos são opcionais.",
         request: {
             params: z.object({
                 id: z.string().describe("ID da faxineira"),
@@ -17,7 +17,15 @@ export class UpdateCleaner extends OpenAPIRoute {
                 content: {
                     "application/json": {
                         schema: z.object({
-                            is_active: z.boolean(),
+                            name: z.string().optional(),
+                            zones: z.string().optional(),
+                            shift_start: z.string().optional(),
+                            shift_end: z.string().optional(),
+                            fixed_accommodations: z.string().nullable().optional(),
+                            is_fixed: z.boolean().optional(),
+                            is_active: z.boolean().optional(),
+                        }).refine(data => Object.keys(data).length > 0, {
+                            message: "Pelo menos um campo deve ser fornecido."
                         }),
                     },
                 },
@@ -25,7 +33,7 @@ export class UpdateCleaner extends OpenAPIRoute {
         },
         responses: {
             "200": {
-                description: "Status atualizado com sucesso",
+                description: "Faxineira atualizada com sucesso",
                 content: {
                     "application/json": {
                         schema: z.object({
@@ -36,13 +44,10 @@ export class UpdateCleaner extends OpenAPIRoute {
                 },
             },
             "400": {
-                description: "ID inválido",
+                description: "ID inválido ou body vazio",
                 content: {
                     "application/json": {
-                        schema: z.object({
-                            success: z.boolean(),
-                            error: z.string(),
-                        }),
+                        schema: z.object({ success: z.boolean(), error: z.string() }),
                     },
                 },
             },
@@ -50,10 +55,7 @@ export class UpdateCleaner extends OpenAPIRoute {
                 description: "Faxineira não encontrada",
                 content: {
                     "application/json": {
-                        schema: z.object({
-                            success: z.boolean(),
-                            error: z.string(),
-                        }),
+                        schema: z.object({ success: z.boolean(), error: z.string() }),
                     },
                 },
             },
@@ -61,10 +63,7 @@ export class UpdateCleaner extends OpenAPIRoute {
                 description: "Erro interno",
                 content: {
                     "application/json": {
-                        schema: z.object({
-                            success: z.boolean(),
-                            error: z.string(),
-                        }),
+                        schema: z.object({ success: z.boolean(), error: z.string() }),
                     },
                 },
             },
@@ -79,20 +78,22 @@ export class UpdateCleaner extends OpenAPIRoute {
             return c.json({ success: false, error: "ID inválido." }, 400);
         }
 
-        const body = await c.req.json<{ is_active: boolean }>();
+        const body = await c.req.json();
+
+        if (!body || Object.keys(body).length === 0) {
+            return c.json({ success: false, error: "Pelo menos um campo deve ser fornecido." }, 400);
+        }
+
         const service = new UpdateCleanerService(c.env);
 
         try {
-            const updated = await service.updateStatus(parsedId, body.is_active);
+            const updated = await service.update(parsedId, body);
 
             if (!updated) {
                 return c.json({ success: false, error: "Faxineira não encontrada." }, 404);
             }
 
-            return c.json(
-                { success: true, message: "Faxineira ativada/inativada com sucesso." },
-                200
-            );
+            return c.json({ success: true, message: "Faxineira atualizada com sucesso." }, 200);
         } catch (e: any) {
             console.error(e);
             return c.json({ success: false, error: e.message }, 500);

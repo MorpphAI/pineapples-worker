@@ -58,10 +58,21 @@ export interface OffDayScheduleInput {
 }
 
 export interface OffDayResult {
+    id: number;
     cleanerId: number;
     cleanerName: string;
     date: string;
     reason: string | null;
+}
+
+export interface UpdateCleanerFields {
+    name?: string;
+    zones?: string;
+    shift_start?: string;
+    shift_end?: string;
+    fixed_accommodations?: string | null;
+    is_fixed?: boolean;
+    is_active?: boolean;
 }
 
 export interface CleanerScheduleView {
