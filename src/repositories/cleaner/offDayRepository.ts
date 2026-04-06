@@ -49,14 +49,15 @@ export class OffDayRepository {
 
     async getOffDaysByMonth(month: string): Promise<OffDayResult[]> {
         const pattern = `${month}-%`;
-        
+
         try {
             const { results } = await this.db.prepare(`
-                SELECT 
-                    c.id as cleanerId, 
-                    c.name as cleanerName, 
-                    o.date, 
-                    o.reason 
+                SELECT
+                    o.id,
+                    c.id as cleanerId,
+                    c.name as cleanerName,
+                    o.date,
+                    o.reason
                 FROM cleaner_off_days o
                 JOIN cleaners c ON c.id = o.cleaner_id
                 WHERE o.date LIKE ?
@@ -67,6 +68,19 @@ export class OffDayRepository {
         } catch (error) {
             console.error("[OffDayRepository] Erro ao buscar folgas do mês:", error);
             return [];
+        }
+    }
+
+    async deleteById(id: number): Promise<boolean> {
+        try {
+            const result = await this.db
+                .prepare("DELETE FROM cleaner_off_days WHERE id = ?")
+                .bind(id)
+                .run();
+            return result.meta.changes > 0;
+        } catch (error) {
+            console.error("[OffDayRepository] Erro ao deletar folga:", error);
+            throw new Error("Falha ao deletar folga.");
         }
     }
 }
