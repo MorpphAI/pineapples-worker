@@ -74,4 +74,18 @@ export class CleanerRepository {
             throw new Error("Falha ao atualizar status da faxineira.");
         }
     }
+
+    async deleteById(id: number): Promise<boolean> {
+        try {
+            const result = await this.db
+                .prepare("DELETE FROM cleaners WHERE id = ?")
+                .bind(id)
+                .run();
+
+            return result.meta.changes > 0;
+        } catch (error) {
+            console.error("[CleanerRepository] Erro ao deletar faxineira:", error);
+            throw new Error("Falha ao deletar faxineira.");
+        }
+    }
 }

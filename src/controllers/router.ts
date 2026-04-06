@@ -11,6 +11,7 @@ import { CreateOffDays } from "./v1/cleaner/createOffDays/createOffDays";
 import { GetOffDays } from "./v1/cleaner/getOffDaysByMonth/getOffDays";
 import { GetCleaner } from "./v1/cleaner/getCleaners/getCleaners";
 import { UpdateCleaner } from "./v1/cleaner/updateCleaner/updateCleaner";
+import { DeleteCleaner } from "./v1/cleaner/deleteCleaner/deleteCleaner";
 import { Env } from "../types/configTypes";
 
 export const pineapplesRouter = fromHono(new Hono<{ Bindings: Env }>());
@@ -22,6 +23,7 @@ pineapplesRouter.post("/v1/cleaner/offdays", CreateOffDays);
 pineapplesRouter.get("/v1/cleaner", GetCleaner);
 pineapplesRouter.get("/v1/cleaner/offdays", GetOffDays);
 pineapplesRouter.patch("/v1/cleaner/:id", UpdateCleaner);
+pineapplesRouter.delete("/v1/cleaner/:id", DeleteCleaner);
 
 pineapplesRouter.post("/v1/scale", CreateScales);
 pineapplesRouter.get("/v1/scale", GetScaleView);
