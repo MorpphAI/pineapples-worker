@@ -32,8 +32,10 @@ export class Priority extends OpenAPIRoute {
                                     stayDuration: z.number().nullable().optional(),
                                     areaM2: z.number(),
                                     effort: z.object({
-                                        teamSize: z.number(),
-                                        estimatedMinutes: z.number()
+                                        effortUnits: z.number(),
+                                        estimatedMinutes: z.number(),
+                                        requiredPeople: z.number(),
+                                        sizeClass: z.string()
                                     }),
                                     address: z.string(),
                                     latitude: z.number().nullable().optional(),

@@ -11,14 +11,14 @@ export class GetPriorityWithCleanerService extends BaseScaleService {
 
         const { checkins, checkouts } = await this.fetchAndFilterBookings(date);
         const turnoverIds = this.identifyTurnovers(checkins, checkouts);
-        const idsToClean = this.getAccommodationIdsToClean(checkouts);
+        const idsToClean = this.getAccommodationIdsToClean(checkouts, checkins);
 
         console.log(`[GetPriorityWithCleanerService] Imóveis para limpar: ${idsToClean.size}`);
 
         const tasks = await this.enrichAndBuildTasks(idsToClean, checkins, checkouts, turnoverIds);
         const prioritizedTasks = this.prioritizeTasks(tasks);
-        const allocatedTasks = await this.allocateTasksToCleaners(prioritizedTasks, date);
+        const allocation = await this.allocateTasksToCleaners(prioritizedTasks, date);
 
-        return { items: allocatedTasks };
+        return { items: allocation.tasks, summary: allocation.summary };
     }
 }

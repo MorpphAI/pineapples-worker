@@ -66,7 +66,7 @@ export class ScaleRepository {
             checkInDate: null,
             checkOutDate: null,
             areaM2: 0,
-            effort: { teamSize: 1, estimatedMinutes: 0 }
+            effort: { effortUnits: 1, estimatedMinutes: 0, requiredPeople: 1, sizeClass: "SMALL" }
         }));
     }
 
@@ -133,7 +133,7 @@ export class ScaleRepository {
             checkInDate: null,
             checkOutDate: null,
             areaM2: 0,
-            effort: { teamSize: 1, estimatedMinutes: 0 }
+            effort: { effortUnits: 1, estimatedMinutes: 0, requiredPeople: 1, sizeClass: "SMALL" }
         }));
     }
 }

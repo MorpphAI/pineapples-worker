@@ -1,22 +1,39 @@
 import { AvantioApiGateway } from "../../../apiGateways/avantio/getAppointments";
 import { CleanerRepository } from "../../../repositories/cleaner/cleanerRepository";
 import { OffDayRepository } from "../../../repositories/cleaner/offDayRepository";
+import { AccommodationStatus, AvantioBooking } from "../../../types/avantioTypes";
 import { Env } from "../../../types/configTypes";
-import { CleaningTask, CleanerState } from "../../../types/cleanerTypes";
-import { AccommodationStatus } from "../../../types/avantioTypes";
-import { AvantioBooking } from "../../../types/avantioTypes";
+import {
+    CleanerState,
+    CleaningBundle,
+    CleaningProfileOverride,
+    CleaningTask,
+    ScaleSummary,
+} from "../../../types/cleanerTypes";
 import * as utils from "../../../utils/scaleUtils";
+
+type AllocationResult = {
+    tasks: CleaningTask[];
+    bundles: CleaningBundle[];
+    summary: ScaleSummary;
+};
 
 export abstract class BaseScaleService {
     protected avantioApiGateway: AvantioApiGateway;
     protected cleanerRepo: CleanerRepository;
     protected offDayRepo: OffDayRepository;
     protected readonly TRAVEL_BUFFER_MINUTES = 30;
+    protected readonly EXTRA_CLEANER_LIMIT = 20;
+    protected warnings: string[] = [];
 
     constructor(env: Env) {
         this.avantioApiGateway = new AvantioApiGateway(env);
         this.cleanerRepo = new CleanerRepository(env.DB);
         this.offDayRepo = new OffDayRepository(env.DB);
+    }
+
+    protected resetWarnings(extraWarnings: string[] = []) {
+        this.warnings = [...extraWarnings];
     }
 
     protected async fetchAndFilterBookings(date: string): Promise<{ checkins: AvantioBooking[], checkouts: AvantioBooking[] }> {
@@ -29,25 +46,31 @@ export abstract class BaseScaleService {
         const checkouts = rawCheckouts.filter(b => utils.isValidBookingStatus(b.status));
 
         console.log(`[ScaleService] Filtrados: ${checkins.length} Check-ins, ${checkouts.length} Check-outs`);
-
         return { checkins, checkouts };
     }
 
     protected identifyTurnovers(checkins: AvantioBooking[], checkouts: AvantioBooking[]): Set<string> {
-        const checkinIds = new Set(checkins.map(b => b.accommodationId));
         const turnoverIds = new Set<string>();
 
-        for (const booking of checkouts) {
-            if (checkinIds.has(booking.accommodationId)) {
-                turnoverIds.add(booking.accommodationId);
+        for (const bookingOut of checkouts) {
+            const bookingIn = checkins.find(b => b.accommodationId === bookingOut.accommodationId);
+            const requirement = utils.classifyCleaningRequirement(bookingOut, bookingIn);
+            if (utils.isSameDayTurnover(requirement)) {
+                turnoverIds.add(bookingOut.accommodationId);
             }
         }
         return turnoverIds;
     }
 
-    protected getAccommodationIdsToClean(checkouts: AvantioBooking[]): Set<string> {
+    protected getAccommodationIdsToClean(checkouts: AvantioBooking[], checkins: AvantioBooking[] = []): Set<string> {
         const ids = new Set<string>();
-        checkouts.forEach(b => ids.add(b.accommodationId));
+        checkouts.forEach(bookingOut => {
+            const bookingIn = checkins.find(b => b.accommodationId === bookingOut.accommodationId);
+            const requirement = utils.classifyCleaningRequirement(bookingOut, bookingIn);
+            if (utils.cleaningIsRequired(requirement)) {
+                ids.add(bookingOut.accommodationId);
+            }
+        });
         return ids;
     }
 
@@ -55,7 +78,8 @@ export abstract class BaseScaleService {
         idsToClean: Set<string>,
         checkins: AvantioBooking[],
         checkouts: AvantioBooking[],
-        turnoverIds: Set<string>
+        turnoverIds: Set<string>,
+        cleaningProfiles: CleaningProfileOverride[] = []
     ): Promise<CleaningTask[]> {
         const tasks: CleaningTask[] = [];
 
@@ -65,16 +89,19 @@ export abstract class BaseScaleService {
         for (const accommodation of accommodations) {
             if (!accommodation || accommodation.status === AccommodationStatus.DISABLED) continue;
 
-            const zone = utils.extractZoneFromAccommodationName(accommodation.name);
+            const bookingIn = checkins.find(b => b.accommodationId === accommodation.id);
+            const bookingOut = checkouts.find(b => b.accommodationId === accommodation.id);
+            const cleaningRequirement = utils.classifyCleaningRequirement(bookingOut, bookingIn);
+            if (!utils.cleaningIsRequired(cleaningRequirement)) continue;
+
+            const profile = utils.findCleaningProfile(cleaningProfiles, accommodation.id, accommodation.name);
+            const zone = profile?.zoneOverride || utils.extractZoneFromAccommodationName(accommodation.name);
 
             if (!zone) {
-                console.warn(`[ScheduleService] Imóvel ${accommodation.name} ignorado: Zona não identificada.`);
+                this.warnings.push(`Imovel ${accommodation.name} ignorado: zona nao identificada.`);
                 continue;
             }
 
-            const bookingIn = checkins.find(b => b.accommodationId === accommodation.id);
-            const bookingOut = checkouts.find(b => b.accommodationId === accommodation.id);
-            const isTurnover = turnoverIds.has(accommodation.id);
             let stayDuration: number | null = null;
             if (bookingOut?.stayDates?.arrival && bookingOut?.stayDates?.departure) {
                 const arrival = new Date(bookingOut.stayDates.arrival);
@@ -82,7 +109,7 @@ export abstract class BaseScaleService {
                 const diffMs = departure.getTime() - arrival.getTime();
                 stayDuration = Math.round(diffMs / (1000 * 60 * 60 * 24));
             }
-            // Parsear coordenadas da Avantio (chegam como strings, podem ser ausentes)
+
             const rawCoords = accommodation.location.coordinates;
             const rawLat = rawCoords?.lat != null ? parseFloat(rawCoords.lat) : null;
             const rawLon = rawCoords?.lon != null ? parseFloat(rawCoords.lon) : null;
@@ -91,29 +118,45 @@ export abstract class BaseScaleService {
 
             const area = accommodation.area?.livingSpace?.amount || 0;
             if (!accommodation.area?.livingSpace?.amount) {
-                console.warn(
-                    `[ALERTA METRAGEM] Imóvel sem área cadastrada: "${accommodation.name}" (ID: ${accommodation.id}). ` +
-                    `Alocando na faixa < 40m² (1 pessoa, 60 min). Verifique o cadastro na Avantio.`
+                this.warnings.push(`Imovel sem area cadastrada: ${accommodation.name} (${accommodation.id}).`);
+            }
+
+            const fallbackEffort = utils.calculateCleaningEffort(area, stayDuration);
+            if (!profile && fallbackEffort.sizeClass === "LARGE") {
+                this.warnings.push(
+                    `Imóvel ${accommodation.name} foi classificado como LARGE por fallback. ` +
+                    "Recomenda-se cadastrar perfil de limpeza para confirmar effortUnits, estimatedMinutes e requiredPeople."
                 );
             }
-            const effort = utils.calculateCleaningEffort(area, stayDuration);
-            const address = `${accommodation.location.addrType === "AVENUE" ? "Av. " : "Rua "}${accommodation.location.address}, Nº ${accommodation.location.number} AP ${accommodation.location.door || ''} - ${accommodation.location.cityName}`;
+            const effort = utils.applyCleaningProfile(fallbackEffort, profile);
+            const addressGroupKey = profile?.addressGroupKeyOverride || utils.buildAddressGroupKey(accommodation);
+            const address = `${accommodation.location.addrType === "AVENUE" ? "Av. " : "Rua "}${accommodation.location.address}, No ${accommodation.location.number} AP ${accommodation.location.door || ""} - ${accommodation.location.cityName}`;
+            const deadlineMinutes = utils.getDeadlineMinutes(cleaningRequirement, bookingIn);
+
+            if (bookingIn && utils.extractCheckInTimeMinutes(bookingIn) === null && utils.isSameDayTurnover(cleaningRequirement)) {
+                const warning = "Avantio nao retornou horario de check-in/check-out no payload atual; usando deadlines fallback.";
+                if (!this.warnings.includes(warning)) this.warnings.push(warning);
+            }
 
             tasks.push({
                 bookingInId: bookingIn ? bookingIn.id : null,
                 bookingOutId: bookingOut ? bookingOut.id : null,
                 accommodationId: accommodation.id,
                 accommodationName: accommodation.name,
-                zone: zone,
+                zone,
                 checkInDate: bookingIn ? bookingIn.stayDates.arrival : null,
                 checkOutDate: bookingOut ? bookingOut.stayDates.departure : null,
-                isTurnover: isTurnover,
-                stayDuration: stayDuration,
+                isTurnover: turnoverIds.has(accommodation.id),
+                cleaningRequirement,
+                stayDuration,
                 areaM2: area,
-                address: address,
-                effort: effort,
-                latitude: latitude,
-                longitude: longitude,
+                address,
+                addressGroupKey,
+                effort,
+                priorityScore: 0,
+                deadlineMinutes,
+                latitude,
+                longitude,
             });
         }
 
@@ -124,22 +167,14 @@ export abstract class BaseScaleService {
         const scoredTasks = tasks.map(task => {
             let score = 0;
 
-            // Turnover sempre prioridade máxima (saída + entrada no mesmo dia)
-            if (task.isTurnover) score += 1000;
-
-            // Tem check-in hoje — quarto precisa estar pronto para receber
-            if (task.checkInDate) score += 500;
-
-            // Estadia muito longa (> 7 dias) — limpeza mais pesada ainda
+            if (task.cleaningRequirement === "GUEST_TURNOVER" || task.cleaningRequirement === "OWNER_TO_GUEST") score += 1000;
+            if (task.cleaningRequirement === "GUEST_TO_OWNER") score += 800;
+            if (task.isTurnover) score += 500;
+            if (task.checkInDate) score += 300;
+            if (task.cleaningRequirement === "OWNER_CHECKOUT") score -= 100;
             if (task.stayDuration != null && task.stayDuration > 7) score += 100;
-
-            // Estadia longa (> 4 dias) — acréscimo adicional
             if (task.stayDuration != null && task.stayDuration > 4) score += 200;
-
-            // Imóvel maior = mais pesado de coordenar (teamSize * 100)
-            score += task.effort.teamSize * 100;
-
-            // Metragem como desempate fino (cada 10m² = 10 pontos)
+            score += task.effort.effortUnits * 100;
             score += Math.floor(task.areaM2 / 10) * 10;
 
             return { ...task, priorityScore: score };
@@ -148,15 +183,12 @@ export abstract class BaseScaleService {
         return scoredTasks.sort((a, b) => {
             const diff = (b.priorityScore ?? 0) - (a.priorityScore ?? 0);
             if (diff !== 0) return diff;
-            // Desempate determinístico por nome
             return a.accommodationName.localeCompare(b.accommodationName);
         });
     }
 
-    private getTaskDeadline(task: CleaningTask): number {
-        const OUTIN_DEADLINE = 15 * 60;
-        const CHECKOUT_DEADLINE = 17 * 60 + 50;
-        return task.isTurnover ? OUTIN_DEADLINE : CHECKOUT_DEADLINE;
+    protected buildCleaningBundles(tasks: CleaningTask[], date: string): CleaningBundle[] {
+        return utils.buildCleaningBundles(tasks, date);
     }
 
     private getEffectiveStart(
@@ -171,41 +203,159 @@ export abstract class BaseScaleService {
         return cleaner.currentAvailableMinutes + LUNCH_BREAK;
     }
 
-    private getTravelBuffer(cleaner: CleanerState, task: CleaningTask): number {
+    private getTravelBuffer(cleaner: CleanerState, bundle: CleaningBundle): number {
         if (
             cleaner.lastLatitude != null &&
             cleaner.lastLongitude != null &&
-            task.latitude != null &&
-            task.longitude != null
+            bundle.latitude != null &&
+            bundle.longitude != null
         ) {
             const distKm = utils.haversineDistanceKm(
                 cleaner.lastLatitude,
                 cleaner.lastLongitude,
-                task.latitude,
-                task.longitude
+                bundle.latitude,
+                bundle.longitude
             );
             return utils.travelMinutesByDistance(distKm);
         }
-        return this.TRAVEL_BUFFER_MINUTES; // fallback: 30 min
+        return this.TRAVEL_BUFFER_MINUTES;
     }
 
-    protected async allocateTasksToCleaners(tasks: CleaningTask[], date: string): Promise<CleaningTask[]> {
-        const activeCleaners = await this.cleanerRepo.findAllActive();
+    private cleanerCanFitBundle(cleaner: CleanerState, bundle: CleaningBundle): boolean {
+        if (!utils.cleanerCanWorkZone(cleaner, bundle.zone)) return false;
 
-        if (!activeCleaners.length) {
-            console.warn("ALERTA: Nenhuma faxineira ativa encontrada!");
-            return tasks;
+        const buf = this.getTravelBuffer(cleaner, bundle);
+        const effectiveStartTime = this.getEffectiveStart(cleaner, cleaner.tasksCount === 0, buf);
+        const taskEnd = effectiveStartTime + bundle.totalMinutes;
+        const effectiveLimit = Math.min(cleaner.shiftEndMinutes, bundle.deadlineMinutes);
+        return taskEnd <= effectiveLimit;
+    }
+
+    private assignBundle(bundle: CleaningBundle, cleaners: CleanerState[], fixedSuffix = false): CleaningBundle {
+        const startMinutes = Math.max(...cleaners.map(cleaner => {
+            const buf = this.getTravelBuffer(cleaner, bundle);
+            return this.getEffectiveStart(cleaner, cleaner.tasksCount === 0, buf);
+        }));
+        const endMinutes = startMinutes + bundle.totalMinutes;
+
+        cleaners.forEach(cleaner => {
+            if (!cleaner.lunchBreakTaken) {
+                const pauseUsed = startMinutes - cleaner.currentAvailableMinutes;
+                if (pauseUsed >= 60) cleaner.lunchBreakTaken = true;
+            }
+            cleaner.currentAvailableMinutes = endMinutes;
+            cleaner.tasksCount++;
+            cleaner.lastLatitude = bundle.latitude ?? null;
+            cleaner.lastLongitude = bundle.longitude ?? null;
+        });
+
+        const cleanerName = cleaners.map(c => c.name).join(" & ") + (fixedSuffix ? " (FIXA)" : "");
+        return {
+            ...bundle,
+            cleanerName,
+            startTime: utils.minutesToTime(startMinutes),
+            endTime: utils.minutesToTime(endMinutes),
+        };
+    }
+
+    private findDedicatedCleaner(bundle: CleaningBundle, fixedCleaners: CleanerState[]): CleanerState | null {
+        return fixedCleaners.find(cleaner => {
+            if (!cleaner.fixed_accommodations) return false;
+            const fixedList = cleaner.fixed_accommodations
+                .split(",")
+                .map(value => utils.normalizeKey(value))
+                .filter(Boolean);
+            return bundle.tasks.some(task => fixedList.includes(utils.normalizeKey(task.accommodationName)));
+        }) || null;
+    }
+
+    private allocateBundlePass(
+        bundles: CleaningBundle[],
+        fixedCleaners: CleanerState[],
+        generalCleaners: CleanerState[]
+    ): { allocated: CleaningBundle[]; unallocated: CleaningBundle[] } {
+        const allocated: CleaningBundle[] = [];
+        const unallocated: CleaningBundle[] = [];
+
+        for (const bundle of bundles) {
+            const dedicatedCleaner = this.findDedicatedCleaner(bundle, fixedCleaners);
+            if (dedicatedCleaner) {
+                if (bundle.requiredPeople === 1 && this.cleanerCanFitBundle(dedicatedCleaner, bundle)) {
+                    allocated.push(this.assignBundle(bundle, [dedicatedCleaner], true));
+                } else {
+                    unallocated.push(bundle);
+                }
+                continue;
+            }
+
+            const candidates = generalCleaners
+                .filter(c => this.cleanerCanFitBundle(c, bundle))
+                .sort((a, b) => {
+                    const startA = this.getEffectiveStart(a, a.tasksCount === 0, this.getTravelBuffer(a, bundle));
+                    const startB = this.getEffectiveStart(b, b.tasksCount === 0, this.getTravelBuffer(b, bundle));
+                    return startA - startB;
+                });
+
+            if (candidates.length >= bundle.requiredPeople) {
+                allocated.push(this.assignBundle(bundle, candidates.slice(0, bundle.requiredPeople)));
+            } else {
+                unallocated.push(bundle);
+            }
         }
 
+        return { allocated, unallocated };
+    }
+
+    private createVirtualCleaner(id: number, zone: string): CleanerState {
+        return {
+            id: -id,
+            name: `EXTRA ${id}`,
+            zones: zone,
+            shift_start: "08:00",
+            shift_end: "18:00",
+            is_active: 1,
+            created_at: new Date().toISOString(),
+            fixed_accommodations: null,
+            is_fixed: 0,
+            currentAvailableMinutes: utils.timeToMinutes("08:00"),
+            shiftEndMinutes: utils.timeToMinutes("17:00"),
+            tasksCount: 0,
+            lunchBreakTaken: false,
+            lastLatitude: null,
+            lastLongitude: null,
+            isVirtual: true,
+        };
+    }
+
+    private expandBundlesToTasks(bundles: CleaningBundle[]): CleaningTask[] {
+        const rows: CleaningTask[] = [];
+
+        for (const bundle of bundles) {
+            let cursor = bundle.startTime && bundle.startTime !== "--:--" ? utils.timeToMinutes(bundle.startTime) : null;
+            for (const task of bundle.tasks) {
+                const start = cursor;
+                const end = start != null ? start + task.effort.estimatedMinutes : null;
+                rows.push({
+                    ...task,
+                    cleanerName: bundle.cleanerName || "SEM ALOCACAO",
+                    startTime: start != null ? utils.minutesToTime(start) : "--:--",
+                    endTime: end != null ? utils.minutesToTime(end) : "--:--",
+                });
+                if (cursor != null) cursor = end;
+            }
+        }
+
+        return rows;
+    }
+
+    protected async allocateTasksToCleaners(tasks: CleaningTask[], date: string): Promise<AllocationResult> {
+        const bundles = this.buildCleaningBundles(tasks, date);
+        const activeCleaners = await this.cleanerRepo.findAllActive();
         const cleanersOffIds = await this.offDayRepo.getCleanersOffByDate(date);
         const availableCleaners = activeCleaners.filter(c => !cleanersOffIds.includes(c.id));
 
-        console.log(`[Alocação] Total Ativas: ${activeCleaners.length} | De Folga: ${cleanersOffIds.length} | Disponíveis: ${availableCleaners.length}`);
-
-        if (availableCleaners.length === 0) {
-            console.warn("ALERTA CRÍTICO: Toda a equipe está de folga hoje!");
-            return tasks;
-        }
+        if (!activeCleaners.length) this.warnings.push("Nenhuma faxineira ativa encontrada.");
+        if (activeCleaners.length > 0 && availableCleaners.length === 0) this.warnings.push("Toda a equipe esta de folga hoje.");
 
         const LUNCH_BREAK_MINUTES = 60;
         const cleanersState: CleanerState[] = availableCleaners.map(c => ({
@@ -220,132 +370,61 @@ export abstract class BaseScaleService {
 
         const fixedCleaners = cleanersState.filter(c => !!c.is_fixed);
         const generalCleaners = cleanersState.filter(c => !c.is_fixed);
+        const extraCleanersByZone: Record<string, number> = {};
 
-        console.log(`[Alocação] Grupos: ${fixedCleaners.length} Fixas | ${generalCleaners.length} Gerais`);
+        let allocated: CleaningBundle[] = [];
+        let unallocated = bundles;
+        let pass = this.allocateBundlePass(unallocated, fixedCleaners, generalCleaners);
+        allocated = allocated.concat(pass.allocated);
+        unallocated = pass.unallocated;
 
-        const finalTaskList: CleaningTask[] = [];
+        let extraCount = 0;
+        while (unallocated.length > 0 && extraCount < this.EXTRA_CLEANER_LIMIT) {
+            const zone = unallocated[0].zone;
+            const nextExtraNumber = extraCount + 1;
+            generalCleaners.push(this.createVirtualCleaner(nextExtraNumber, zone));
 
-        for (const task of tasks) {
-            let taskHandled = false;
+            pass = this.allocateBundlePass(unallocated, [], generalCleaners);
 
-            const dedicatedCleaner = fixedCleaners.find(c => {
-                if (!c.fixed_accommodations) return false;
-                const fixedList = c.fixed_accommodations.toUpperCase();
-                const accName = task.accommodationName.toUpperCase();
-                return fixedList.includes(accName);
-            });
-
-            if (dedicatedCleaner) {
-                console.log(`    [!] Imóvel Fixo: ${task.accommodationName} -> ${dedicatedCleaner.name}`);
-
-                const duration = task.effort.estimatedMinutes;
-                const travelBuf = this.getTravelBuffer(dedicatedCleaner, task);
-                const startTime = this.getEffectiveStart(dedicatedCleaner, dedicatedCleaner.tasksCount === 0, travelBuf);
-
-                const taskDeadline = this.getTaskDeadline(task);
-                const effectiveLimit = Math.min(dedicatedCleaner.shiftEndMinutes, taskDeadline);
-                if ((startTime + duration) <= effectiveLimit) {
-                    const assignedTask = { ...task };
-                    assignedTask.cleanerName = dedicatedCleaner.name + " (FIXA)";
-                    assignedTask.startTime = utils.minutesToTime(startTime);
-                    assignedTask.endTime = utils.minutesToTime(startTime + duration);
-
-                    if (!dedicatedCleaner.lunchBreakTaken) {
-                        const pauseUsed = startTime - dedicatedCleaner.currentAvailableMinutes;
-                        if (pauseUsed >= 60) dedicatedCleaner.lunchBreakTaken = true;
-                    }
-                    dedicatedCleaner.currentAvailableMinutes = startTime + duration;
-                    dedicatedCleaner.tasksCount++;
-                    dedicatedCleaner.lastLatitude = task.latitude ?? null;
-                    dedicatedCleaner.lastLongitude = task.longitude ?? null;
-
-                    finalTaskList.push(assignedTask);
-                    taskHandled = true;
-                } else {
-                    console.warn(`    [X] Fixa ${dedicatedCleaner.name} sem horário.`);
-                    const failedTask = { ...task };
-                    failedTask.cleanerName = "SEM HORÁRIO (FIXA)";
-                    finalTaskList.push(failedTask);
-                    taskHandled = true;
-                }
+            if (pass.allocated.length === 0) {
+                generalCleaners.pop();
+                this.warnings.push(`Nenhuma limpeza adicional coube ao adicionar EXTRA ${nextExtraNumber} para ${zone}; verifique deadlines e duracao.`);
+                break;
             }
 
-            if (!taskHandled) {
-                (task as any)._pending = true;
-            }
+            extraCount = nextExtraNumber;
+            extraCleanersByZone[zone] = (extraCleanersByZone[zone] || 0) + 1;
+            allocated = allocated.concat(pass.allocated);
+            unallocated = pass.unallocated;
         }
 
-        for (const task of tasks) {
-            if (!(task as any)._pending) continue;
-
-            const requiredPeople = task.effort.teamSize;
-            const duration = task.effort.estimatedMinutes;
-
-            let candidates = generalCleaners.filter(c => {
-                const cZone = c.zones.toUpperCase().replace(/\s/g, '');
-                const tZone = task.zone.toUpperCase().replace(/\s/g, '');
-                const zoneMatch = cZone.includes(tZone);
-
-                if (!zoneMatch) return false;
-
-                const buf = this.getTravelBuffer(c, task);
-                const effectiveStartTime = this.getEffectiveStart(c, c.tasksCount === 0, buf);
-                const taskEnd = effectiveStartTime + duration;
-
-                const taskDeadline = this.getTaskDeadline(task);
-                const effectiveLimit = Math.min(c.shiftEndMinutes, taskDeadline);
-                if (taskEnd > effectiveLimit) return false;
-                return true;
-            });
-
-            candidates.sort((a, b) => {
-                const bufA = this.getTravelBuffer(a, task);
-                const bufB = this.getTravelBuffer(b, task);
-                const startA = this.getEffectiveStart(a, a.tasksCount === 0, bufA);
-                const startB = this.getEffectiveStart(b, b.tasksCount === 0, bufB);
-                return startA - startB;
-            });
-
-            if (candidates.length >= requiredPeople) {
-                const selectedTeam = candidates.slice(0, requiredPeople);
-
-                console.log(`    [V] Alocando ${task.accommodationName} para: ${selectedTeam.map(c => c.name).join(', ')}`);
-
-                const startMinutes = Math.max(...selectedTeam.map(c => {
-                    const buf = this.getTravelBuffer(c, task);
-                    return this.getEffectiveStart(c, c.tasksCount === 0, buf);
-                }));
-                const endMinutes = startMinutes + duration;
-
-                const assignedTask = { ...task };
-                assignedTask.cleanerName = selectedTeam.map(c => c.name).join(" & ");
-                assignedTask.startTime = utils.minutesToTime(startMinutes);
-                assignedTask.endTime = utils.minutesToTime(endMinutes);
-
-                selectedTeam.forEach(cleaner => {
-                    if (!cleaner.lunchBreakTaken) {
-                        const pauseUsed = startMinutes - cleaner.currentAvailableMinutes;
-                        if (pauseUsed >= 60) cleaner.lunchBreakTaken = true;
-                    }
-                    cleaner.currentAvailableMinutes = endMinutes;
-                    cleaner.tasksCount++;
-                    cleaner.lastLatitude = task.latitude ?? null;
-                    cleaner.lastLongitude = task.longitude ?? null;
-                });
-
-                finalTaskList.push(assignedTask);
-
-            } else {
-                const deadline = utils.minutesToTime(this.getTaskDeadline(task));
-                console.warn(`    [!] Falha Geral: ${task.accommodationName} (${task.zone}) - deadline ${deadline} - Candidatos: ${candidates.length}/${requiredPeople}`);
-                const failedTask = { ...task };
-                failedTask.cleanerName = "SEM ALOCACAO";
-                failedTask.startTime = "--:--";
-                failedTask.endTime = "--:--";
-                finalTaskList.push(failedTask);
-            }
+        if (unallocated.length > 0) {
+            this.warnings.push(`${unallocated.length} pacote(s) ficaram sem alocacao mesmo apos extras.`);
         }
 
-        return finalTaskList;
+        const failed = unallocated.map(bundle => ({
+            ...bundle,
+            cleanerName: "SEM ALOCACAO",
+            startTime: "--:--",
+            endTime: "--:--",
+        }));
+        const finalBundles = allocated.concat(failed);
+
+        const summary: ScaleSummary = {
+            totalApartments: bundles.reduce((sum, bundle) => sum + bundle.tasks.length, 0),
+            totalBundles: bundles.length,
+            availableCleaners: availableCleaners.length,
+            cleanersOff: cleanersOffIds.length,
+            extraCleanersNeeded: extraCount,
+            extraCleanersByZone,
+            unallocatedCount: unallocated.length,
+            warnings: this.warnings,
+        };
+
+        return {
+            tasks: this.expandBundlesToTasks(finalBundles),
+            bundles: finalBundles,
+            summary,
+        };
     }
 }

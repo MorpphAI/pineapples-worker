@@ -13,9 +13,34 @@ export interface Cleaner {
 export type NewCleaner = Omit<Cleaner, "id" | "is_active" | "created_at">;
 
 export interface CleaningEffort {
-    teamSize: 1 | 2 | 3;
+    effortUnits: 1 | 2 | 3;
     estimatedMinutes: number;
+    requiredPeople: 1 | 2 | 3;
+    sizeClass: "SMALL" | "MEDIUM" | "LARGE" | "CUSTOM";
 }
+
+export interface CleaningProfileOverride {
+    accommodationId?: string;
+    accommodationName: string;
+    effortUnits?: 1 | 2 | 3;
+    estimatedMinutes?: number;
+    requiredPeople?: 1 | 2 | 3;
+    zoneOverride?: string;
+    addressGroupKeyOverride?: string;
+    isActive?: boolean;
+    notes?: string;
+}
+
+export type BookingOccupantType = "GUEST" | "OWNER";
+
+export type CleaningRequirement =
+    | "GUEST_TURNOVER"
+    | "GUEST_CHECKOUT_ONLY"
+    | "OWNER_CHECKOUT"
+    | "OWNER_EXTENSION"
+    | "OWNER_TO_GUEST"
+    | "GUEST_TO_OWNER"
+    | "NO_CLEANING";
 
 export interface CleaningTask {
     cleanerName?: string;
@@ -30,13 +55,50 @@ export interface CleaningTask {
     checkInDate: string | null;
     checkOutDate: string | null;
     isTurnover: boolean;
+    cleaningRequirement?: CleaningRequirement;
     stayDuration: number | null;
     areaM2: number;
     effort: CleaningEffort;
     priorityScore?: number;
+    deadlineMinutes?: number;
     address: string;
+    addressGroupKey?: string;
     latitude?: number | null;
     longitude?: number | null;
+}
+
+export interface CleaningBundle {
+    id: string;
+    date: string;
+    zone: string;
+    addressGroupKey: string;
+    addressDisplay: string;
+    tasks: CleaningTask[];
+    totalEffortUnits: number;
+    totalMinutes: number;
+    requiredPeople: 1 | 2 | 3;
+    deadlineMinutes: number;
+    priorityScore: number;
+    cleanerName?: string;
+    startTime?: string;
+    endTime?: string;
+    latitude?: number | null;
+    longitude?: number | null;
+}
+
+export interface ScaleSummary {
+    totalApartments: number;
+    totalBundles: number;
+    availableCleaners: number;
+    cleanersOff: number;
+    extraCleanersNeeded: number;
+    extraCleanersByZone: Record<string, number>;
+    unallocatedCount: number;
+    warnings: string[];
+}
+
+export interface GenerateScheduleOptions {
+    cleaningProfiles?: CleaningProfileOverride[];
 }
 
 export interface CleanerState extends Cleaner {
@@ -46,6 +108,7 @@ export interface CleanerState extends Cleaner {
     lunchBreakTaken: boolean;
     lastLatitude?: number | null;
     lastLongitude?: number | null;
+    isVirtual?: boolean;
 }
 
 export interface OffDayScheduleInput {

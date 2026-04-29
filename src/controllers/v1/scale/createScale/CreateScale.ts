@@ -3,6 +3,7 @@ import { z } from "zod";
 import { Env } from "../../../../types/configTypes";
 import { ScaleService } from "../../../../services/v1/scale/createScale/PostScaleService";
 import { Context } from "hono";
+import { normalizeCleaningProfiles } from "../../../../utils/scaleUtils";
 
 export class CreateScales extends OpenAPIRoute { 
    schema = {
@@ -23,7 +24,8 @@ export class CreateScales extends OpenAPIRoute {
                                 success: z.boolean(),
                                 message: z.string(),
                                 runId: z.number(),
-                                downloadUrl: z.string().describe("Link direto para baixar o Excel")
+                                downloadUrl: z.string().describe("Link direto para baixar o Excel"),
+                                summary: z.any().optional()
                             }),
                         },
                     },
@@ -51,9 +53,26 @@ export class CreateScales extends OpenAPIRoute {
         const targetDate = data.query.date || today;
 
         try {
+            const rawBody = await c.req.text().catch(() => "");
+            let requestBody: any = {};
+            const warnings: string[] = [];
+
+            if (rawBody.trim()) {
+                try {
+                    requestBody = JSON.parse(rawBody);
+                } catch {
+                    warnings.push("Body JSON invalido ignorado; escala gerada com comportamento fallback.");
+                }
+            }
+
+            const normalizedProfiles = normalizeCleaningProfiles(requestBody?.cleaningProfiles);
             
             const scaleService = new ScaleService(c.env);
-            const result = await scaleService.generateDailySchedule(targetDate);
+            const result = await scaleService.generateDailySchedule(
+                targetDate,
+                { cleaningProfiles: normalizedProfiles.profiles },
+                [...warnings, ...normalizedProfiles.warnings]
+            );
 
             const url = new URL(c.req.url);
             const localDownloadLink = `${url.origin}/v1/scale/${result.runId}/export`;
@@ -63,6 +82,7 @@ export class CreateScales extends OpenAPIRoute {
                 message: `Escala gerada para o dia ${targetDate}`,
                 runId: result.runId,
                 downloadUrl: localDownloadLink,
+                summary: result.summary,
             }, 201);
             
         } catch (error: any) {

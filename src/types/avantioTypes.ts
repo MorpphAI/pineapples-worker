@@ -9,6 +9,14 @@ export interface AvantioBooking {
     arrival: string;    
     departure: string;  
   };
+  arrivalTime?: string;
+  departureTime?: string;
+  checkInTime?: string;
+  checkOutTime?: string;
+  expectedArrivalTime?: string;
+  expectedDepartureTime?: string;
+  plannedArrivalTime?: string;
+  plannedDepartureTime?: string;
   status: string;       
   companyId: string;
   accommodationId: string;

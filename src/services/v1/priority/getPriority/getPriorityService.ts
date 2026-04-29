@@ -11,7 +11,7 @@ export class GetPriorityService extends BaseScaleService {
 
         const { checkins, checkouts } = await this.fetchAndFilterBookings(date);
         const turnoverIds = this.identifyTurnovers(checkins, checkouts);
-        const idsToClean = this.getAccommodationIdsToClean(checkouts);
+        const idsToClean = this.getAccommodationIdsToClean(checkouts, checkins);
 
         console.log(`[GetPriorityService] Imóveis para limpar: ${idsToClean.size}`);
 
