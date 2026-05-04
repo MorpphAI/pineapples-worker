@@ -68,8 +68,8 @@ export enum AccommodationStatus {
     ENABLED = 'ENABLED' 
 }
 
-export interface AvantioResponse {
-  data: AvantioBooking[];
+export interface AvantioResponse<T = AvantioBooking> {
+  data: T[];
   _links?: {
     next?: string;
   };

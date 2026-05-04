@@ -85,6 +85,24 @@ export function findCleaningProfile(
     return profiles.find(profile => normalizeKey(profile.accommodationName) === targetName) || null;
 }
 
+export function mergeCleaningProfiles(
+    baseProfiles: CleaningProfileOverride[],
+    overridingProfiles: CleaningProfileOverride[]
+): CleaningProfileOverride[] {
+    const merged = baseProfiles.slice();
+
+    for (const override of overridingProfiles) {
+        const existingIndex = merged.findIndex(profile => profilesMatch(profile, override));
+        if (existingIndex >= 0) {
+            merged[existingIndex] = override;
+        } else {
+            merged.push(override);
+        }
+    }
+
+    return merged;
+}
+
 export function applyCleaningProfile(
     fallback: CleaningEffort,
     profile?: CleaningProfileOverride | null
@@ -96,4 +114,15 @@ export function applyCleaningProfile(
         requiredPeople: profile.requiredPeople ?? 1,
         sizeClass: "CUSTOM",
     };
+}
+
+function profilesMatch(
+    left: CleaningProfileOverride,
+    right: CleaningProfileOverride
+): boolean {
+    if (left.accommodationId && right.accommodationId && left.accommodationId === right.accommodationId) {
+        return true;
+    }
+
+    return normalizeKey(left.accommodationName) === normalizeKey(right.accommodationName);
 }

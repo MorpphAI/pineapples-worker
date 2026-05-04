@@ -6,6 +6,7 @@ export {
 export {
     applyCleaningProfile,
     findCleaningProfile,
+    mergeCleaningProfiles,
     normalizeCleaningProfiles,
 } from "../domain/scale/cleaningProfiles";
 export {

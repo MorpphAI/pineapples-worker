@@ -56,22 +56,29 @@ export class CreateScales extends OpenAPIRoute {
             const rawBody = await c.req.text().catch(() => "");
             let requestBody: any = {};
             const warnings: string[] = [];
+            let hasCleaningProfiles = false;
 
             if (rawBody.trim()) {
                 try {
                     requestBody = JSON.parse(rawBody);
+                    hasCleaningProfiles = Object.prototype.hasOwnProperty.call(requestBody, "cleaningProfiles");
                 } catch {
-                    warnings.push("Body JSON invalido ignorado; escala gerada com comportamento fallback.");
+                    warnings.push("Body JSON invalido ignorado; perfis persistidos ou fallback serao usados.");
                 }
             }
 
-            const normalizedProfiles = normalizeCleaningProfiles(requestBody?.cleaningProfiles);
+            const options = {};
+            if (hasCleaningProfiles) {
+                const normalizedProfiles = normalizeCleaningProfiles(requestBody?.cleaningProfiles);
+                warnings.push(...normalizedProfiles.warnings);
+                Object.assign(options, { cleaningProfiles: normalizedProfiles.profiles });
+            }
             
             const scaleService = new ScaleService(c.env);
             const result = await scaleService.generateDailySchedule(
                 targetDate,
-                { cleaningProfiles: normalizedProfiles.profiles },
-                [...warnings, ...normalizedProfiles.warnings]
+                options,
+                warnings
             );
 
             const url = new URL(c.req.url);

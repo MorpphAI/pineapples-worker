@@ -18,10 +18,21 @@ import { DeleteScale } from "./v1/scale/deleteScale/deleteScale";
 import { GetPriorityWithCleaner } from "./v1/priority/getPriorityWithCleaner/getPriorityWithCleaner";
 import { Priority } from "./v1/priority/getPriority/getPriority";
 import { Env } from "../types/configTypes";
+import { GetAccommodations } from "./v1/accommodation/getAccommodations/getAccommodations";
+import { GetAccommodationById } from "./v1/accommodation/getAccommodations/getAccommodationById";
+import { UpdateAccommodationCleaningProfile } from "./v1/accommodation/updateCleaningProfile/updateCleaningProfile";
+import { ResetAccommodationCleaningProfile } from "./v1/accommodation/resetCleaningProfile/resetCleaningProfile";
+import { SyncAccommodations } from "./v1/accommodation/syncAccommodations/syncAccommodations";
 
 export const pineapplesRouter = fromHono(new Hono<{ Bindings: Env }>());
 
 pineapplesRouter.get("/v1/appointments", GetAppointments);
+
+pineapplesRouter.get("/v1/accommodations", GetAccommodations);
+pineapplesRouter.post("/v1/accommodations/sync", SyncAccommodations);
+pineapplesRouter.get("/v1/accommodations/:id", GetAccommodationById);
+pineapplesRouter.patch("/v1/accommodations/:id/cleaning-profile", UpdateAccommodationCleaningProfile);
+pineapplesRouter.post("/v1/accommodations/:id/reset-cleaning-profile", ResetAccommodationCleaningProfile);
 
 // Cleaners — rotas estáticas antes das dinâmicas (:id)
 pineapplesRouter.post("/v1/cleaner", CreateCleaners);

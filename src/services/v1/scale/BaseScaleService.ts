@@ -1,7 +1,8 @@
 import { AvantioApiGateway } from "../../../apiGateways/avantio/getAppointments";
+import { AccommodationRepository } from "../../../repositories/accommodation/accommodationRepository";
 import { CleanerRepository } from "../../../repositories/cleaner/cleanerRepository";
 import { OffDayRepository } from "../../../repositories/cleaner/offDayRepository";
-import { AccommodationStatus, AvantioBooking } from "../../../types/avantioTypes";
+import { AccommodationStatus, AvantioAccommodation, AvantioBooking } from "../../../types/avantioTypes";
 import { Env } from "../../../types/configTypes";
 import {
     CleanerState,
@@ -20,6 +21,7 @@ type AllocationResult = {
 
 export abstract class BaseScaleService {
     protected avantioApiGateway: AvantioApiGateway;
+    protected accommodationRepo: AccommodationRepository | null;
     protected cleanerRepo: CleanerRepository;
     protected offDayRepo: OffDayRepository;
     protected readonly TRAVEL_BUFFER_MINUTES = 30;
@@ -28,6 +30,7 @@ export abstract class BaseScaleService {
 
     constructor(env: Env) {
         this.avantioApiGateway = new AvantioApiGateway(env);
+        this.accommodationRepo = env?.DB ? new AccommodationRepository(env.DB) : null;
         this.cleanerRepo = new CleanerRepository(env.DB);
         this.offDayRepo = new OffDayRepository(env.DB);
     }
@@ -85,6 +88,15 @@ export abstract class BaseScaleService {
 
         const fetchAccommodations = Array.from(idsToClean).map(id => this.avantioApiGateway.getAccommodation(id));
         const accommodations = await Promise.all(fetchAccommodations);
+        const knownAccommodations = accommodations.filter((item): item is AvantioAccommodation => !!item);
+
+        if (this.accommodationRepo && knownAccommodations.length > 0) {
+            try {
+                await this.accommodationRepo.upsertMany(knownAccommodations);
+            } catch (error) {
+                console.warn("[ScaleService] Falha ao atualizar tabela de apartamentos; seguindo com a escala.", error);
+            }
+        }
 
         for (const accommodation of accommodations) {
             if (!accommodation || accommodation.status === AccommodationStatus.DISABLED) continue;
