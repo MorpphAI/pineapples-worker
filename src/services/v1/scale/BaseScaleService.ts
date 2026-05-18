@@ -277,7 +277,10 @@ export abstract class BaseScaleService {
                 .split(",")
                 .map(value => utils.normalizeKey(value))
                 .filter(Boolean);
-            return bundle.tasks.some(task => fixedList.includes(utils.normalizeKey(task.accommodationName)));
+            return bundle.tasks.some(task =>
+                fixedList.includes(utils.normalizeKey(task.accommodationName)) ||
+                fixedList.includes(utils.normalizeKey(task.accommodationId))
+            );
         }) || null;
     }
 

@@ -310,6 +310,56 @@ describe("address grouping into cleaning bundles", () => {
 });
 
 describe("bundle allocation", () => {
+    it("assigns a fixed cleaner to a matching apartment and marks the row as fixed", async () => {
+        const fixedCleaner = {
+            ...cleaner(1, "Cleaner Fixed"),
+            fixed_accommodations: "APT 101",
+            is_fixed: 1,
+        };
+        const harness = new AllocationHarness([
+            fixedCleaner,
+            cleaner(2, "Cleaner General"),
+        ]);
+        const result = await harness.allocate([task("APT 101", 1, 60)]);
+
+        expect(result.tasks[0].cleanerName).toBe("Cleaner Fixed (FIXA)");
+    });
+
+    it("matches fixed apartments by accommodation code/id as well as display name", async () => {
+        const fixedCleaner = {
+            ...cleaner(1, "Cleaner Fixed"),
+            fixed_accommodations: "APT 101",
+            is_fixed: 1,
+        };
+        const codedTask = {
+            ...task("APT 101 ZONA1", 1, 60),
+            accommodationId: "APT 101",
+        };
+        const harness = new AllocationHarness([
+            fixedCleaner,
+            cleaner(2, "Cleaner General"),
+        ]);
+        const result = await harness.allocate([codedTask]);
+
+        expect(result.tasks[0].cleanerName).toBe("Cleaner Fixed (FIXA)");
+    });
+
+    it("does not treat fixed accommodations as dedicated when is_fixed is disabled", async () => {
+        const notFixedCleaner = {
+            ...cleaner(1, "Cleaner Listed"),
+            fixed_accommodations: "APT 101",
+            is_fixed: 0,
+        };
+        const harness = new AllocationHarness([
+            notFixedCleaner,
+            cleaner(2, "Cleaner General"),
+        ]);
+        const result = await harness.allocate([task("APT 101", 1, 60)]);
+
+        expect(result.tasks[0].cleanerName).toBe("Cleaner Listed");
+        expect(result.tasks[0].cleanerName).not.toContain("(FIXA)");
+    });
+
     it("assigns three same-address small apartments to one cleaner when time allows", async () => {
         const harness = new AllocationHarness([cleaner(1, "Cleaner One")]);
         const result = await harness.allocate([

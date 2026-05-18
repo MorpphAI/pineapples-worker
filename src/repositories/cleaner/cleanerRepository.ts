@@ -29,6 +29,7 @@ export class CleanerRepository {
         if (fields.zones !== undefined) { setClauses.push("zones = ?"); values.push(fields.zones); }
         if (fields.shift_start !== undefined) { setClauses.push("shift_start = ?"); values.push(fields.shift_start); }
         if (fields.shift_end !== undefined) { setClauses.push("shift_end = ?"); values.push(fields.shift_end); }
+        if (fields.phone !== undefined) { setClauses.push("phone = ?"); values.push(fields.phone); }
         if (fields.fixed_accommodations !== undefined) { setClauses.push("fixed_accommodations = ?"); values.push(fields.fixed_accommodations); }
         if (fields.is_fixed !== undefined) { setClauses.push("is_fixed = ?"); values.push(fields.is_fixed ? 1 : 0); }
         if (fields.is_active !== undefined) { setClauses.push("is_active = ?"); values.push(fields.is_active ? 1 : 0); }
@@ -78,7 +79,7 @@ export class CleanerRepository {
         if (cleaners.length === 0) return true;
 
         const stmt = this.db.prepare(
-            `INSERT INTO cleaners (name, zones, shift_start, shift_end, fixed_accommodations, is_fixed) VALUES (?, ?, ?, ?, ?, ?)`
+            `INSERT INTO cleaners (name, zones, shift_start, shift_end, phone, fixed_accommodations, is_fixed, is_active) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
         );
 
         const batch = cleaners.map((c) => 
@@ -87,8 +88,10 @@ export class CleanerRepository {
                 c.zones, 
                 c.shift_start, 
                 c.shift_end,
-                c.fixed_accommodations || null,
-                c.is_fixed ? 1 : 0
+                c.phone ?? null,
+                c.fixed_accommodations ?? null,
+                c.is_fixed ? 1 : 0,
+                c.is_active === undefined ? 1 : c.is_active ? 1 : 0
             )
         );
 

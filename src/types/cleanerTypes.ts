@@ -5,12 +5,22 @@ export interface Cleaner {
     shift_start: string;
     shift_end: string;
     is_active: number;
+    phone?: string | null;
     created_at: string;
     fixed_accommodations?: string | null;
     is_fixed: number;
 }
 
-export type NewCleaner = Omit<Cleaner, "id" | "is_active" | "created_at">;
+export interface NewCleaner {
+    name: string;
+    zones: string;
+    shift_start: string;
+    shift_end: string;
+    phone?: string | null;
+    fixed_accommodations?: string | null;
+    is_fixed: boolean;
+    is_active?: boolean;
+}
 
 export interface CleaningEffort {
     effortUnits: 1 | 2 | 3;
@@ -133,6 +143,7 @@ export interface UpdateCleanerFields {
     zones?: string;
     shift_start?: string;
     shift_end?: string;
+    phone?: string | null;
     fixed_accommodations?: string | null;
     is_fixed?: boolean;
     is_active?: boolean;
