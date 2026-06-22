@@ -23,6 +23,7 @@ import { GetAccommodationById } from "./v1/accommodation/getAccommodations/getAc
 import { UpdateAccommodationCleaningProfile } from "./v1/accommodation/updateCleaningProfile/updateCleaningProfile";
 import { ResetAccommodationCleaningProfile } from "./v1/accommodation/resetCleaningProfile/resetCleaningProfile";
 import { SyncAccommodations } from "./v1/accommodation/syncAccommodations/syncAccommodations";
+import { SyncAuthorizationStatus } from "./v1/kanban/syncAuthorizationStatus/syncAuthorizationStatus";
 
 export const pineapplesRouter = fromHono(new Hono<{ Bindings: Env }>());
 
@@ -33,6 +34,8 @@ pineapplesRouter.post("/v1/accommodations/sync", SyncAccommodations);
 pineapplesRouter.get("/v1/accommodations/:id", GetAccommodationById);
 pineapplesRouter.patch("/v1/accommodations/:id/cleaning-profile", UpdateAccommodationCleaningProfile);
 pineapplesRouter.post("/v1/accommodations/:id/reset-cleaning-profile", ResetAccommodationCleaningProfile);
+
+pineapplesRouter.post("/v1/kanban/authorization-sync", SyncAuthorizationStatus);
 
 // Cleaners — rotas estáticas antes das dinâmicas (:id)
 pineapplesRouter.post("/v1/cleaner", CreateCleaners);
