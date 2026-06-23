@@ -1,6 +1,10 @@
 import { describe, expect, it, vi, afterEach } from "vitest";
 import { SyncAuthorizationStatusService } from "../../src/services/v1/kanban/syncAuthorizationStatusService";
-import { AuthorizationSyncPayload, AuthorizationSyncRpcResult } from "../../src/repositories/kanban/supabaseKanbanRepository";
+import {
+  AuthorizationSyncPayload,
+  AuthorizationSyncResult,
+  PineOSKanbanAuthorizationClient,
+} from "../../src/repositories/kanban/pineosKanbanAuthorizationClient";
 import { AvantioBooking, BookingStatus } from "../../src/types/avantioTypes";
 import { todayInSaoPaulo } from "../../src/controllers/v1/kanban/syncAuthorizationStatus/syncAuthorizationStatus";
 
@@ -29,7 +33,7 @@ function booking(accommodationId: string, status: string, overrides: Partial<Ava
 function buildService(
   checkouts: AvantioBooking[],
   checkins: AvantioBooking[],
-  syncAuthorization: (input: AuthorizationSyncPayload) => Promise<AuthorizationSyncRpcResult>,
+  syncAuthorization: (input: AuthorizationSyncPayload) => Promise<AuthorizationSyncResult>,
 ) {
   return new SyncAuthorizationStatusService(
     {} as any,
@@ -43,6 +47,7 @@ function buildService(
 
 afterEach(() => {
   vi.useRealTimers();
+  vi.restoreAllMocks();
 });
 
 describe("SyncAuthorizationStatusService", () => {
@@ -121,11 +126,11 @@ describe("SyncAuthorizationStatusService", () => {
     });
   });
 
-  it("counts skipped manual_late as skipped and manualSkipped", async () => {
+  it("counts skipped manual_late_not_overwritten as skipped and manualSkipped", async () => {
     const service = buildService(
       [booking("apt-1", BookingStatus.CONFIRMED)],
       [],
-      async () => ({ status: "skipped", reason: "manual_late" }),
+      async () => ({ status: "skipped", reason: "manual_late_not_overwritten" }),
     );
 
     const result = await service.sync(DATE);
@@ -135,7 +140,7 @@ describe("SyncAuthorizationStatusService", () => {
     expect(result.summary.errors).toBe(0);
   });
 
-  it("continues when one Supabase RPC call fails", async () => {
+  it("continues when one PineOS backend sync call fails", async () => {
     const service = buildService(
       [booking("apt-1", BookingStatus.CONFIRMED), booking("apt-2", BookingStatus.CONFIRMED)],
       [],
@@ -151,6 +156,110 @@ describe("SyncAuthorizationStatusService", () => {
     expect(result.summary.errors).toBe(1);
     expect(result.summary.updated).toBe(1);
     expect(result.results.map((item) => item.accommodationId)).toEqual(["apt-1", "apt-2"]);
+  });
+});
+
+describe("PineOSKanbanAuthorizationClient", () => {
+  it("requires PINEOS_KANBAN_AUTH_SYNC_URL", () => {
+    expect(() => new PineOSKanbanAuthorizationClient({
+      PINEOS_KANBAN_AUTH_SYNC_SECRET: "secret",
+    } as any)).toThrow("PINEOS_KANBAN_AUTH_SYNC_URL is not configured");
+  });
+
+  it("requires PINEOS_KANBAN_AUTH_SYNC_SECRET", () => {
+    expect(() => new PineOSKanbanAuthorizationClient({
+      PINEOS_KANBAN_AUTH_SYNC_URL: "https://pineos.example/functions/v1/kanban-authorization-sync",
+    } as any)).toThrow("PINEOS_KANBAN_AUTH_SYNC_SECRET is not configured");
+  });
+
+  it("sends backend requests with the shared secret and returns updated", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ status: "updated", card_id: "card-1", new_status: "out" }), { status: 200 }),
+    );
+    const client = new PineOSKanbanAuthorizationClient({
+      PINEOS_KANBAN_AUTH_SYNC_URL: "https://pineos.example/functions/v1/kanban-authorization-sync",
+      PINEOS_KANBAN_AUTH_SYNC_SECRET: "shared-secret",
+    } as any);
+
+    const result = await client.syncAuthorization({
+      accommodationId: "apt-1",
+      propertyCode: "APT1",
+      targetDate: DATE,
+      authorizationStatus: "out",
+      payload: { source: "test" },
+    });
+
+    expect(result).toEqual({ status: "updated", card_id: "card-1", new_status: "out" });
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://pineos.example/functions/v1/kanban-authorization-sync",
+      expect.objectContaining({
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Accept": "application/json",
+          "x-kanban-auth-sync-secret": "shared-secret",
+        },
+        body: JSON.stringify({
+          accommodationId: "apt-1",
+          propertyCode: "APT1",
+          targetDate: DATE,
+          authorizationStatus: "out",
+          authorizationSource: "avantio-status-sync",
+          payload: { source: "test" },
+        }),
+      }),
+    );
+  });
+
+  it("returns unchanged from the backend", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ status: "unchanged", previous_status: "tim", new_status: "tim" }), { status: 200 }),
+    );
+    const client = new PineOSKanbanAuthorizationClient({
+      PINEOS_KANBAN_AUTH_SYNC_URL: "https://pineos.example/functions/v1/kanban-authorization-sync",
+      PINEOS_KANBAN_AUTH_SYNC_SECRET: "shared-secret",
+    } as any);
+
+    await expect(client.syncAuthorization({
+      accommodationId: "apt-1",
+      targetDate: DATE,
+      authorizationStatus: "tim",
+      payload: {},
+    })).resolves.toEqual({ status: "unchanged", previous_status: "tim", new_status: "tim" });
+  });
+
+  it("returns skipped manual_late_not_overwritten from the backend", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ status: "skipped", reason: "manual_late_not_overwritten" }), { status: 200 }),
+    );
+    const client = new PineOSKanbanAuthorizationClient({
+      PINEOS_KANBAN_AUTH_SYNC_URL: "https://pineos.example/functions/v1/kanban-authorization-sync",
+      PINEOS_KANBAN_AUTH_SYNC_SECRET: "shared-secret",
+    } as any);
+
+    await expect(client.syncAuthorization({
+      accommodationId: "apt-1",
+      targetDate: DATE,
+      authorizationStatus: "out",
+      payload: {},
+    })).resolves.toEqual({ status: "skipped", reason: "manual_late_not_overwritten" });
+  });
+
+  it("throws on backend HTTP failure", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("bad secret", { status: 401 }),
+    );
+    const client = new PineOSKanbanAuthorizationClient({
+      PINEOS_KANBAN_AUTH_SYNC_URL: "https://pineos.example/functions/v1/kanban-authorization-sync",
+      PINEOS_KANBAN_AUTH_SYNC_SECRET: "shared-secret",
+    } as any);
+
+    await expect(client.syncAuthorization({
+      accommodationId: "apt-1",
+      targetDate: DATE,
+      authorizationStatus: "out",
+      payload: {},
+    })).rejects.toThrow("PineOS authorization sync failed: 401 bad secret");
   });
 });
 

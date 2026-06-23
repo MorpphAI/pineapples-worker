@@ -51,8 +51,8 @@ Crie um arquivo `.dev.vars` na raiz do projeto (não comite este arquivo) com as
 AVANTIO_API_KEY=sua_chave_aqui
 AVANTIO_BASE_URL=https://api.avantio.pro/pms/v2
 API_KEY=sua_api_key_local
-SUPABASE_URL=https://seu-projeto.supabase.co
-SUPABASE_SERVICE_ROLE_KEY=sua_service_role_key_local
+PINEOS_KANBAN_AUTH_SYNC_URL=https://vshruwobguomqplpqnnk.supabase.co/functions/v1/kanban-authorization-sync
+PINEOS_KANBAN_AUTH_SYNC_SECRET=seu_secret_compartilhado_local
 ```
 
 ### 3. Executando Localmente
@@ -162,7 +162,7 @@ npx wrangler deploy
 ```bash
 npx wrangler secret put API_KEY
 npx wrangler secret put AVANTIO_API_KEY
-npx wrangler secret put SUPABASE_SERVICE_ROLE_KEY
+npx wrangler secret put PINEOS_KANBAN_AUTH_SYNC_SECRET
 ```
 
 ### Ver Logs em Tempo Real

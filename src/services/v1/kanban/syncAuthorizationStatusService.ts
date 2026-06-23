@@ -1,10 +1,10 @@
 import { AvantioApiGateway } from "../../../apiGateways/avantio/getAppointments";
 import { classifyCleaningRequirement, isSameDayTurnover } from "../../../domain/scale/bookingClassification";
 import {
-  AuthorizationSyncRpcResult,
+  AuthorizationSyncResult,
   AuthorizationSyncStatus,
-  SupabaseKanbanRepository,
-} from "../../../repositories/kanban/supabaseKanbanRepository";
+  PineOSKanbanAuthorizationClient,
+} from "../../../repositories/kanban/pineosKanbanAuthorizationClient";
 import { AvantioBooking } from "../../../types/avantioTypes";
 import { Env } from "../../../types/configTypes";
 import { isValidBookingStatus } from "../../../utils/scaleUtils";
@@ -40,19 +40,19 @@ export type SyncAuthorizationStatusResult = {
 };
 
 type AvantioAuthorizationGateway = Pick<AvantioApiGateway, "getCheckins" | "getCheckouts">;
-type KanbanAuthorizationRepository = Pick<SupabaseKanbanRepository, "syncAuthorization">;
+type KanbanAuthorizationClient = Pick<PineOSKanbanAuthorizationClient, "syncAuthorization">;
 
 export class SyncAuthorizationStatusService {
   private readonly avantioApiGateway: AvantioAuthorizationGateway;
-  private readonly kanbanRepository: KanbanAuthorizationRepository;
+  private readonly kanbanClient: KanbanAuthorizationClient;
 
   constructor(
     env: Env,
     avantioApiGateway: AvantioAuthorizationGateway = new AvantioApiGateway(env),
-    kanbanRepository: KanbanAuthorizationRepository = new SupabaseKanbanRepository(env),
+    kanbanClient: KanbanAuthorizationClient = new PineOSKanbanAuthorizationClient(env),
   ) {
     this.avantioApiGateway = avantioApiGateway;
-    this.kanbanRepository = kanbanRepository;
+    this.kanbanClient = kanbanClient;
   }
 
   async sync(date: string): Promise<SyncAuthorizationStatusResult> {
@@ -103,7 +103,7 @@ export class SyncAuthorizationStatusService {
       };
 
       try {
-        const rpcResult = await this.kanbanRepository.syncAuthorization({
+        const syncResult = await this.kanbanClient.syncAuthorization({
           accommodationId: bookingOut.accommodationId,
           propertyCode,
           targetDate: date,
@@ -111,16 +111,16 @@ export class SyncAuthorizationStatusService {
           payload,
         });
 
-        this.countRpcResult(result, rpcResult);
+        this.countSyncResult(result, syncResult);
         result.results.push({
           accommodationId: bookingOut.accommodationId,
           propertyCode,
           computedStatus,
-          rpcStatus: rpcResult.status,
-          reason: rpcResult.reason,
-          cardId: rpcResult.card_id,
-          previousStatus: rpcResult.previous_status,
-          newStatus: rpcResult.new_status,
+          rpcStatus: syncResult.status,
+          reason: syncResult.reason,
+          cardId: syncResult.card_id,
+          previousStatus: syncResult.previous_status,
+          newStatus: syncResult.new_status,
         });
       } catch (error: any) {
         result.summary.errors += 1;
@@ -154,20 +154,20 @@ export class SyncAuthorizationStatusService {
     return bookingOut.externalData?.reference ?? bookingOut.reference ?? bookingOut.id1 ?? null;
   }
 
-  private countRpcResult(result: SyncAuthorizationStatusResult, rpcResult: AuthorizationSyncRpcResult): void {
-    if (rpcResult.status === "updated") {
+  private countSyncResult(result: SyncAuthorizationStatusResult, syncResult: AuthorizationSyncResult): void {
+    if (syncResult.status === "updated") {
       result.summary.updated += 1;
       return;
     }
 
-    if (rpcResult.status === "unchanged") {
+    if (syncResult.status === "unchanged") {
       result.summary.unchanged += 1;
       return;
     }
 
-    if (rpcResult.status === "skipped") {
+    if (syncResult.status === "skipped") {
       result.summary.skipped += 1;
-      if (this.isManualSkip(rpcResult.reason)) {
+      if (this.isManualSkip(syncResult.reason)) {
         result.summary.manualSkipped += 1;
       }
       return;
@@ -177,6 +177,10 @@ export class SyncAuthorizationStatusService {
   }
 
   private isManualSkip(reason?: string): boolean {
-    return reason === "late" || reason === "leite" || reason === "manual_late" || reason === "manual";
+    return reason === "late"
+      || reason === "leite"
+      || reason === "manual_late"
+      || reason === "manual"
+      || reason === "manual_late_not_overwritten";
   }
 }

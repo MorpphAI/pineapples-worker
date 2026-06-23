@@ -15,6 +15,6 @@
 	],
 	"vars": {
     "AVANTIO_BASE_URL": "https://api.avantio.pro/pms/v2",
-    "SUPABASE_URL": "https://vshruwobguomqplpqnnk.supabase.co"
+    "PINEOS_KANBAN_AUTH_SYNC_URL": "https://vshruwobguomqplpqnnk.supabase.co/functions/v1/kanban-authorization-sync"
   }
 }
