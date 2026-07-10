@@ -64,6 +64,7 @@ export type SyncAuthorizationStatusResult = {
 
 type AvantioAuthorizationGateway = Pick<AvantioApiGateway, "getCheckins" | "getCheckouts">;
 type KanbanAuthorizationClient = Pick<PineOSKanbanAuthorizationClient, "syncAuthorization">;
+type IdempotencyKeyBuilder = (targetDate: string, accommodationId: string) => string;
 
 type DeduplicationResult = {
   bookings: AvantioBooking[];
@@ -94,10 +95,22 @@ type SafeBookingDiagnostic = {
   calendarRecordKind?: string;
   reason?: string;
   hasComment?: boolean;
-  topLevelFields: string[];
-  signals?: Record<string, boolean>;
-  idempotencyKey?: string;
+  topLevelFieldNames: string[];
+  classificationSignals?: Record<string, boolean>;
 };
+
+const ALLOWED_CLASSIFICATION_SIGNAL_NAMES = [
+  "explicitOperationalType",
+  "hasGuestIdentity",
+  "hasExternalReservationEvidence",
+  "hasPositiveAmount",
+  "hasZeroAmount",
+  "hasRawPositiveOccupancy",
+  "hasEffectiveGuestOccupancyEvidence",
+  "hasPlaceholderOccupancyPattern",
+  "hasComment",
+  "usedLegacyFallback",
+] as const;
 
 export function normalizeAvantioDate(value: unknown): string | null {
   if (typeof value !== "string") return null;
@@ -223,7 +236,7 @@ export function classifyCalendarRecords(bookings: AvantioBooking[]): ClassifiedC
       logSafeAuthorizationEvent("operational_block", buildSafeBookingDiagnostic(booking, {
         calendarRecordKind: classification.kind,
         hasComment: classification.signals.hasComment,
-        signals: classification.signals,
+        classificationSignals: classification.signals,
       }));
       classified.operationalBlocks.push(booking);
       continue;
@@ -232,7 +245,7 @@ export function classifyCalendarRecords(bookings: AvantioBooking[]): ClassifiedC
       logSafeAuthorizationEvent("unknown_calendar_record", buildSafeBookingDiagnostic(booking, {
         calendarRecordKind: classification.kind,
         hasComment: classification.signals.hasComment,
-        signals: classification.signals,
+        classificationSignals: classification.signals,
       }));
       classified.unknowns.push(booking);
       continue;
@@ -249,8 +262,10 @@ export function buildIdempotencyKey(date: string, accommodationId: string): stri
 
 export function buildSafeBookingDiagnostic(
   booking: AvantioBooking,
-  extra: Partial<Omit<SafeBookingDiagnostic, "accommodationId" | "bookingId" | "reference" | "status" | "arrival" | "departure" | "topLevelFields">> = {},
+  extra: Partial<Omit<SafeBookingDiagnostic, "accommodationId" | "bookingId" | "reference" | "status" | "arrival" | "departure" | "topLevelFieldNames">> = {},
 ): SafeBookingDiagnostic {
+  const { classificationSignals, ...safeExtra } = extra;
+
   return {
     accommodationId: stringOrNull(booking.accommodationId),
     bookingId: stringOrNull(booking.id),
@@ -258,11 +273,24 @@ export function buildSafeBookingDiagnostic(
     status: stringOrNull(booking.status),
     arrival: normalizeAvantioDate(booking.stayDates?.arrival),
     departure: normalizeAvantioDate(booking.stayDates?.departure),
-    topLevelFields: Object.keys(booking)
+    topLevelFieldNames: Object.keys(booking)
       .filter((field) => !SENSITIVE_DIAGNOSTIC_FIELDS.has(field.toLowerCase()))
       .sort(),
-    ...extra,
+    ...safeExtra,
+    ...(classificationSignals
+      ? { classificationSignals: buildSafeClassificationSignals(classificationSignals) }
+      : {}),
   };
+}
+
+function buildSafeClassificationSignals(signals: Record<string, unknown>): Record<string, boolean> {
+  const safeSignals: Record<string, boolean> = {};
+
+  for (const signalName of ALLOWED_CLASSIFICATION_SIGNAL_NAMES) {
+    safeSignals[signalName] = signals[signalName] === true;
+  }
+
+  return safeSignals;
 }
 
 function logSafeAuthorizationEvent(event: string, diagnostic: SafeBookingDiagnostic): void {
@@ -286,14 +314,17 @@ function stringOrNull(value: unknown): string | null {
 export class SyncAuthorizationStatusService {
   private readonly avantioApiGateway: AvantioAuthorizationGateway;
   private readonly kanbanClient: KanbanAuthorizationClient;
+  private readonly idempotencyKeyBuilder: IdempotencyKeyBuilder;
 
   constructor(
     env: Env,
     avantioApiGateway: AvantioAuthorizationGateway = new AvantioApiGateway(env),
     kanbanClient: KanbanAuthorizationClient = new PineOSKanbanAuthorizationClient(env),
+    idempotencyKeyBuilder: IdempotencyKeyBuilder = buildIdempotencyKey,
   ) {
     this.avantioApiGateway = avantioApiGateway;
     this.kanbanClient = kanbanClient;
+    this.idempotencyKeyBuilder = idempotencyKeyBuilder;
   }
 
   async sync(date: string): Promise<SyncAuthorizationStatusResult> {
@@ -342,10 +373,12 @@ export class SyncAuthorizationStatusService {
       },
       results: [],
     };
+    const sentIdempotencyKeys = new Set<string>();
 
     const accommodationIds = Array.from(new Set([
       ...checkoutsByAccommodation.keys(),
       ...operationalCheckoutsByAccommodation.keys(),
+      ...operationalCheckinsByAccommodation.keys(),
       ...unknownCheckoutsByAccommodation.keys(),
       ...Array.from(unknownCheckinsByAccommodation.keys()).filter((id) => checkoutsByAccommodation.has(id)),
     ])).sort();
@@ -388,6 +421,19 @@ export class SyncAuthorizationStatusService {
         continue;
       }
 
+      if (checkouts.length === 0 && operationalCheckins.length > 0) {
+        this.countLocalSkip(result);
+        result.results.push({
+          accommodationId,
+          propertyCode: this.getConsistentPropertyCode(operationalCheckins),
+          computedStatus: null,
+          rpcStatus: "skipped",
+          reason: "operational_block",
+          operationalBlock: this.getSingleOperationalBlockPayload(operationalCheckins),
+        });
+        continue;
+      }
+
       if (checkouts.length > 1) {
         this.countLocalAmbiguity(result);
         this.logAccommodationSkip("ambiguous_multiple_checkouts", checkouts);
@@ -416,9 +462,8 @@ export class SyncAuthorizationStatusService {
 
       if (checkouts.length !== 1) continue;
 
-      const [bookingOut] = checkouts;
-      const [singleCheckin] = checkins;
-      const bookingIn = checkins.length === 1 ? singleCheckin : null;
+      const bookingOut = checkouts[0];
+      const bookingIn = checkins.length === 1 ? checkins[0] : null;
       const operationalBlock = this.getSingleOperationalBlockPayload([
         ...operationalCheckouts,
         ...operationalCheckins,
@@ -426,7 +471,7 @@ export class SyncAuthorizationStatusService {
       const classification = classifyCleaningRequirement(bookingOut, bookingIn);
       const computedStatus: AuthorizationSyncStatus = isSameDayTurnover(classification) ? "tim" : "out";
       const propertyCode = this.getPropertyCode(bookingOut);
-      const idempotencyKey = buildIdempotencyKey(date, bookingOut.accommodationId);
+      const idempotencyKey = this.idempotencyKeyBuilder(targetDate, bookingOut.accommodationId);
       const payload = {
         date,
         idempotency_key: idempotencyKey,
@@ -442,6 +487,19 @@ export class SyncAuthorizationStatusService {
         detected_at: new Date().toISOString(),
         source: AUTHORIZATION_SOURCE,
       };
+
+      if (sentIdempotencyKeys.has(idempotencyKey)) {
+        this.countLocalSkip(result);
+        result.results.push({
+          accommodationId: bookingOut.accommodationId,
+          propertyCode,
+          computedStatus,
+          rpcStatus: "skipped",
+          reason: "duplicate_idempotency_key_in_execution",
+        });
+        continue;
+      }
+      sentIdempotencyKeys.add(idempotencyKey);
 
       result.summary.candidates += 1;
 
@@ -470,7 +528,6 @@ export class SyncAuthorizationStatusService {
         result.summary.errors += 1;
         logSafeAuthorizationEvent("pineos_sync_error", buildSafeBookingDiagnostic(bookingOut, {
           reason: error instanceof Error ? error.message : String(error),
-          idempotencyKey,
         }));
         result.results.push({
           accommodationId: bookingOut.accommodationId,
@@ -513,16 +570,19 @@ export class SyncAuthorizationStatusService {
   private getSingleOperationalBlockPayload(bookings: AvantioBooking[]): OperationalBlockPayload | null {
     if (bookings.length === 0) return null;
 
-    const [block] = bookings;
-    const comment = extractCalendarRecordComment(block);
+    for (const block of [...bookings].sort(compareBookingsForDeduplication)) {
+      const comment = extractCalendarRecordComment(block);
 
-    return {
-      id: firstPresent([block.id]) ?? null,
-      reference: firstPresent([block.reference, block.externalData?.reference, block.id1]) ?? null,
-      arrival: normalizeAvantioDate(block.stayDates?.arrival) ?? null,
-      departure: normalizeAvantioDate(block.stayDates?.departure) ?? null,
-      comment: comment.comment ?? null,
-    };
+      return {
+        id: firstPresent([block.id]) ?? null,
+        reference: firstPresent([block.reference, block.externalData?.reference, block.id1]) ?? null,
+        arrival: normalizeAvantioDate(block.stayDates?.arrival) ?? null,
+        departure: normalizeAvantioDate(block.stayDates?.departure) ?? null,
+        comment: comment.comment ?? null,
+      };
+    }
+
+    return null;
   }
 
   private countLocalAmbiguity(result: SyncAuthorizationStatusResult): void {
@@ -535,9 +595,10 @@ export class SyncAuthorizationStatusService {
   }
 
   private logAccommodationSkip(reason: string, bookings: AvantioBooking[]): void {
-    const [booking] = bookings;
-    if (!booking) return;
-    logSafeAuthorizationEvent("accommodation_skipped", buildSafeBookingDiagnostic(booking, { reason }));
+    for (const booking of bookings) {
+      logSafeAuthorizationEvent("accommodation_skipped", buildSafeBookingDiagnostic(booking, { reason }));
+      return;
+    }
   }
 
   private countSyncResult(result: SyncAuthorizationStatusResult, syncResult: AuthorizationSyncResult): void {

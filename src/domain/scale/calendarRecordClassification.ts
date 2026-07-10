@@ -11,10 +11,12 @@ export type CalendarRecordClassification = {
   signals: {
     explicitOperationalType: boolean;
     hasGuestIdentity: boolean;
-    hasPositiveOccupancy: boolean;
-    hasZeroOccupancy: boolean;
+    hasExternalReservationEvidence: boolean;
     hasPositiveAmount: boolean;
     hasZeroAmount: boolean;
+    hasRawPositiveOccupancy: boolean;
+    hasEffectiveGuestOccupancyEvidence: boolean;
+    hasPlaceholderOccupancyPattern: boolean;
     hasComment: boolean;
     usedLegacyFallback: boolean;
   };
@@ -37,6 +39,28 @@ const OPERATIONAL_TYPE_MARKERS = new Set([
   "TASK",
   "SERVICE",
   "INTERNALBLOCK",
+]);
+
+const RESERVATION_TYPE_MARKERS = new Set([
+  "BOOKING",
+  "RESERVATION",
+  "RESERVA",
+  "GUEST",
+  "HOSPEDE",
+  "HOSPEDAGEM",
+  "STAY",
+]);
+
+const EXTERNAL_RESERVATION_MARKERS = new Set([
+  "AIRBNB",
+  "BOOKING",
+  "BOOKINGCOM",
+  "EXPEDIA",
+  "VRBO",
+  "HOMEAWAY",
+  "DIRECT",
+  "RESERVATION",
+  "RESERVA",
 ]);
 
 const STRUCTURAL_TYPE_FIELDS = [
@@ -109,15 +133,33 @@ export function classifyCalendarRecord(booking: AvantioBooking): CalendarRecordC
   const occupancy = getOccupancySignals(booking);
   const amount = getAmountSignals(booking);
   const comment = extractCalendarRecordComment(booking);
+  const hasExternalReservationEvidence = hasExternalReservationEvidenceSignal(booking);
+  const hasStructuredReservationType = hasExplicitReservationType(booking);
+  const hasStrongRealReservationEvidence = hasStrongRealReservationEvidenceSignal({
+    hasGuestIdentity,
+    hasExternalReservationEvidence,
+    hasPositiveAmount: amount.hasPositiveAmount,
+    hasExplicitReservationType: hasStructuredReservationType,
+  });
+  const hasEffectiveGuestOccupancyEvidence = occupancy.hasRawPositiveOccupancy
+    && !(
+      amount.hasZeroAmount
+      && !hasGuestIdentity
+      && !hasStrongRealReservationEvidence
+      && comment.hasComment
+      && occupancy.hasPlaceholderOccupancyPattern
+    );
   const hasAdditionalClassificationFields = hasKnownClassificationFields(booking);
 
   const signals = {
     explicitOperationalType,
     hasGuestIdentity,
-    hasPositiveOccupancy: occupancy.hasPositiveOccupancy,
-    hasZeroOccupancy: occupancy.hasZeroOccupancy,
+    hasExternalReservationEvidence,
     hasPositiveAmount: amount.hasPositiveAmount,
     hasZeroAmount: amount.hasZeroAmount,
+    hasRawPositiveOccupancy: occupancy.hasRawPositiveOccupancy,
+    hasEffectiveGuestOccupancyEvidence,
+    hasPlaceholderOccupancyPattern: occupancy.hasPlaceholderOccupancyPattern,
     hasComment: comment.hasComment,
     usedLegacyFallback: false,
   };
@@ -130,16 +172,25 @@ export function classifyCalendarRecord(booking: AvantioBooking): CalendarRecordC
     return { kind: "OPERATIONAL_BLOCK", signals };
   }
 
+  if (hasStrongRealReservationEvidence) {
+    return { kind: "GUEST_STAY", signals };
+  }
+
   if (
     amount.hasZeroAmount
     && !hasGuestIdentity
-    && (occupancy.hasZeroOccupancy || !occupancy.hasOccupancySignal)
+    && !hasStrongRealReservationEvidence
     && comment.hasComment
+    && (
+      occupancy.hasZeroOccupancy
+      || occupancy.hasPlaceholderOccupancyPattern
+      || !occupancy.hasOccupancySignal
+    )
   ) {
     return { kind: "OPERATIONAL_BLOCK", signals };
   }
 
-  if (hasGuestIdentity || occupancy.hasPositiveOccupancy || amount.hasPositiveAmount) {
+  if (hasEffectiveGuestOccupancyEvidence) {
     return { kind: "GUEST_STAY", signals };
   }
 
@@ -178,6 +229,50 @@ function hasExplicitOperationalType(booking: AvantioBooking): boolean {
     });
 }
 
+function hasExplicitReservationType(booking: AvantioBooking): boolean {
+  const values: unknown[] = [];
+  for (const field of STRUCTURAL_TYPE_FIELDS) values.push(booking[field]);
+  values.push(booking.externalData?.type, booking.externalData?.category, booking.externalData?.kind);
+
+  return values
+    .flatMap((value) => collectStrings(value))
+    .some((value) => {
+      const normalized = normalizeMarker(value);
+      if (isOperationalMarker(normalized)) return false;
+      return isReservationMarker(normalized);
+    });
+}
+
+function hasExternalReservationEvidenceSignal(booking: AvantioBooking): boolean {
+  const values = [
+    booking.externalData?.reference,
+    booking.source,
+    booking.channel,
+    booking.externalData?.source,
+    booking.externalData?.channel,
+  ];
+
+  return values
+    .flatMap((value) => collectStrings(value))
+    .some((value) => {
+      const normalized = normalizeMarker(value);
+      if (isGenericInternalReference(normalized, booking)) return false;
+      return isReservationMarker(normalized);
+    });
+}
+
+function hasStrongRealReservationEvidenceSignal(input: {
+  hasGuestIdentity: boolean;
+  hasExternalReservationEvidence: boolean;
+  hasPositiveAmount: boolean;
+  hasExplicitReservationType: boolean;
+}): boolean {
+  return input.hasGuestIdentity
+    || input.hasExternalReservationEvidence
+    || input.hasPositiveAmount
+    || input.hasExplicitReservationType;
+}
+
 function hasGuestIdentitySignal(booking: AvantioBooking): boolean {
   return GUEST_IDENTITY_FIELDS.some((field) => hasIdentityValue(booking[field]));
 }
@@ -198,24 +293,44 @@ function hasIdentityValue(value: unknown): boolean {
 
 function getOccupancySignals(booking: AvantioBooking): {
   hasOccupancySignal: boolean;
-  hasPositiveOccupancy: boolean;
+  hasRawPositiveOccupancy: boolean;
   hasZeroOccupancy: boolean;
+  hasPlaceholderOccupancyPattern: boolean;
 } {
   const values = OCCUPANCY_FIELDS.flatMap((field) => collectNumbers(booking[field]));
   if (values.length === 0) {
     return {
       hasOccupancySignal: false,
-      hasPositiveOccupancy: false,
+      hasRawPositiveOccupancy: false,
       hasZeroOccupancy: false,
+      hasPlaceholderOccupancyPattern: false,
     };
   }
 
   const total = values.reduce((sum, value) => sum + value, 0);
   return {
     hasOccupancySignal: true,
-    hasPositiveOccupancy: values.some((value) => value > 0),
+    hasRawPositiveOccupancy: values.some((value) => value > 0),
     hasZeroOccupancy: total === 0,
+    hasPlaceholderOccupancyPattern: hasPlaceholderOccupancyPattern(booking),
   };
+}
+
+function hasPlaceholderOccupancyPattern(booking: AvantioBooking): boolean {
+  const adultValues = collectNumbers(booking.adults);
+  if (adultValues.length === 0 || adultValues.some((value) => value !== 1)) return false;
+
+  const childValues = collectNumbers(booking.children);
+  const babyValues = collectNumbers(booking.babies);
+  const otherOccupancyValues = [
+    ...collectNumbers(booking.occupancy),
+    ...collectNumbers(booking.guestsNumber),
+    ...collectNumbers(booking.numberOfGuests),
+  ];
+
+  return allAbsentOrZero(childValues)
+    && allAbsentOrZero(babyValues)
+    && allAbsentOrZero(otherOccupancyValues);
 }
 
 function getAmountSignals(booking: AvantioBooking): {
@@ -309,6 +424,39 @@ function normalizeMarker(value: string): string {
     .replace(/[\u0300-\u036f]/g, "")
     .toUpperCase()
     .replace(/[\s_-]/g, "");
+}
+
+function isOperationalMarker(normalizedValue: string): boolean {
+  for (const marker of OPERATIONAL_TYPE_MARKERS) {
+    if (normalizedValue.includes(marker)) return true;
+  }
+  return false;
+}
+
+function isReservationMarker(normalizedValue: string): boolean {
+  for (const marker of EXTERNAL_RESERVATION_MARKERS) {
+    if (normalizedValue.includes(marker)) return true;
+  }
+  for (const marker of RESERVATION_TYPE_MARKERS) {
+    if (normalizedValue.includes(marker)) return true;
+  }
+  return false;
+}
+
+function isGenericInternalReference(normalizedValue: string, booking: AvantioBooking): boolean {
+  const genericValues = [
+    booking.id,
+    booking.id1,
+    booking.reference,
+    "external-ref",
+  ].map((value) => normalizeMarker(value));
+
+  return genericValues.includes(normalizedValue)
+    || normalizedValue.endsWith("EXTERNAL");
+}
+
+function allAbsentOrZero(values: number[]): boolean {
+  return values.length === 0 || values.every((value) => value === 0);
 }
 
 function isNonEmptyString(value: unknown): value is string {

@@ -24,6 +24,18 @@ function booking(status: string, overrides: Partial<AvantioBooking> = {}): Avant
   };
 }
 
+function productionLikeOperationalBlock(overrides: Partial<AvantioBooking> = {}): Partial<AvantioBooking> {
+  return {
+    value: "R$ 0,00",
+    client: "",
+    adults: 1,
+    children: 0,
+    babies: 0,
+    comment: "Dedetização",
+    ...overrides,
+  };
+}
+
 describe("classifyCalendarRecord", () => {
   it("keeps OWNER with zero amount and comment as OWNER_STAY", () => {
     const result = classifyCalendarRecord(booking(BookingStatus.OWNER, {
@@ -52,7 +64,8 @@ describe("classifyCalendarRecord", () => {
     }));
 
     expect(result.kind).toBe("GUEST_STAY");
-    expect(result.signals.hasPositiveOccupancy).toBe(true);
+    expect(result.signals.hasRawPositiveOccupancy).toBe(true);
+    expect(result.signals.hasEffectiveGuestOccupancyEvidence).toBe(true);
   });
 
   it("classifies explicit MAINTENANCE type as OPERATIONAL_BLOCK", () => {
@@ -85,7 +98,8 @@ describe("classifyCalendarRecord", () => {
     expect(result.kind).toBe("OPERATIONAL_BLOCK");
     expect(result.signals).toMatchObject({
       hasZeroAmount: true,
-      hasZeroOccupancy: true,
+      hasRawPositiveOccupancy: false,
+      hasEffectiveGuestOccupancyEvidence: false,
       hasComment: true,
     });
   });
@@ -111,5 +125,67 @@ describe("classifyCalendarRecord", () => {
 
     expect(result.kind).toBe("GUEST_STAY");
     expect(result.signals.usedLegacyFallback).toBe(true);
+  });
+
+  it("classifies production-like zero-value calendar block with adults 1 and empty client as OPERATIONAL_BLOCK", () => {
+    const result = classifyCalendarRecord(booking(
+      BookingStatus.CONFIRMED,
+      productionLikeOperationalBlock(),
+    ));
+
+    expect(result.kind).toBe("OPERATIONAL_BLOCK");
+    expect(result.signals).toMatchObject({
+      hasZeroAmount: true,
+      hasGuestIdentity: false,
+      hasComment: true,
+    });
+  });
+
+  it("keeps OWNER production-like zero-value block signals as OWNER_STAY", () => {
+    const result = classifyCalendarRecord(booking(
+      BookingStatus.OWNER,
+      productionLikeOperationalBlock(),
+    ));
+
+    expect(result.kind).toBe("OWNER_STAY");
+  });
+
+  it("keeps a real zero-value guest with adults 1 as GUEST_STAY", () => {
+    const result = classifyCalendarRecord(booking(BookingStatus.CONFIRMED, {
+      ...productionLikeOperationalBlock(),
+      client: "Fictional Guest",
+    }));
+
+    expect(result.kind).toBe("GUEST_STAY");
+    expect(result.signals.hasGuestIdentity).toBe(true);
+  });
+
+  it("keeps a zero-value booking with external reservation evidence as GUEST_STAY", () => {
+    const result = classifyCalendarRecord(booking(BookingStatus.CONFIRMED, {
+      value: "R$ 0,00",
+      adults: 1,
+      externalData: { reference: "AIRBNB-123" },
+    }));
+
+    expect(result.kind).toBe("GUEST_STAY");
+    expect(result.signals).toMatchObject({
+      hasExternalReservationEvidence: true,
+      hasZeroAmount: true,
+      hasRawPositiveOccupancy: true,
+    });
+  });
+
+  it("does not classify a normal commented booking as operational block", () => {
+    const result = classifyCalendarRecord(booking(BookingStatus.CONFIRMED, {
+      value: "R$ 100,00",
+      client: "Fictional Guest",
+      adults: 1,
+      children: 0,
+      babies: 0,
+      comment: "Late arrival",
+    }));
+
+    expect(result.kind).toBe("GUEST_STAY");
+    expect(result.kind).not.toBe("OPERATIONAL_BLOCK");
   });
 });

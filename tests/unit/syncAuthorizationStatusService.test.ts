@@ -33,10 +33,23 @@ function booking(accommodationId: string, status: string, overrides: Partial<Ava
   };
 }
 
+function productionLikeOperationalBlock(accommodationId: string, overrides: Partial<AvantioBooking> = {}): AvantioBooking {
+  return booking(accommodationId, BookingStatus.CONFIRMED, {
+    value: "R$ 0,00",
+    client: "",
+    adults: 1,
+    children: 0,
+    babies: 0,
+    comment: "Dedetização",
+    ...overrides,
+  });
+}
+
 function buildService(
   checkouts: AvantioBooking[],
   checkins: AvantioBooking[],
   syncAuthorization: (input: AuthorizationSyncPayload) => Promise<AuthorizationSyncResult>,
+  idempotencyKeyBuilder: (targetDate: string, accommodationId: string) => string = buildIdempotencyKey,
 ) {
   return new SyncAuthorizationStatusService(
     {} as any,
@@ -45,6 +58,7 @@ function buildService(
       getCheckouts: async () => checkouts,
     },
     { syncAuthorization },
+    idempotencyKeyBuilder,
   );
 }
 
@@ -366,7 +380,83 @@ describe("SyncAuthorizationStatusService", () => {
   it("builds deterministic idempotency keys by date and accommodation", () => {
     expect(buildIdempotencyKey(DATE, "apt-1")).toBe("avantio-status-sync:2026-06-22:apt-1");
     expect(buildIdempotencyKey(DATE, "apt-1")).toBe(buildIdempotencyKey(DATE, "apt-1"));
+    expect(buildIdempotencyKey(DATE, "apt-1")).not.toBe(buildIdempotencyKey("2026-06-23", "apt-1"));
     expect(buildIdempotencyKey(DATE, "apt-1")).not.toBe(buildIdempotencyKey(DATE, "apt-2"));
+    expect(buildIdempotencyKey(DATE, "apt-1")).not.toContain("Test Guest");
+    expect(buildIdempotencyKey(DATE, "apt-1")).not.toContain("test@example.com");
+    expect(buildIdempotencyKey(DATE, "apt-1")).not.toContain("+55 21 99999-9999");
+    expect(buildIdempotencyKey(DATE, "apt-1")).not.toContain("123.456.789-00");
+  });
+
+  it("uses the normalized target date when building the idempotency key", async () => {
+    const calls: AuthorizationSyncPayload[] = [];
+    const service = buildService(
+      [booking("apt-1", BookingStatus.CONFIRMED, {
+        stayDates: {
+          arrival: "2026-06-21T15:00:00-03:00",
+          departure: "2026-06-22T11:00:00-03:00",
+        },
+      })],
+      [],
+      async (input) => {
+        calls.push(input);
+        return { status: "updated" };
+      },
+    );
+
+    await service.sync("2026-06-22T09:00:00-03:00");
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toMatchObject({
+      accommodationId: "apt-1",
+      targetDate: "2026-06-22T09:00:00-03:00",
+      idempotencyKey: "avantio-status-sync:2026-06-22:apt-1",
+    });
+    expect(calls[0].payload).toMatchObject({
+      date: "2026-06-22T09:00:00-03:00",
+      idempotency_key: "avantio-status-sync:2026-06-22:apt-1",
+    });
+  });
+
+  it("suppresses a duplicate idempotency key within the same execution before a second PineOS call", async () => {
+    const calls: AuthorizationSyncPayload[] = [];
+    const duplicateKey = "avantio-status-sync:2026-06-22:forced-collision";
+    const service = buildService(
+      [booking("apt-1", BookingStatus.CONFIRMED), booking("apt-2", BookingStatus.CONFIRMED)],
+      [],
+      async (input) => {
+        calls.push(input);
+        return { status: "updated" };
+      },
+      () => duplicateKey,
+    );
+
+    const result = await service.sync(DATE);
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0].idempotencyKey).toBe(duplicateKey);
+    expect(calls[0].payload).toMatchObject({
+      idempotency_key: duplicateKey,
+      accommodation_id: "apt-1",
+    });
+    expect(result.results).toEqual([
+      expect.objectContaining({
+        accommodationId: "apt-1",
+        rpcStatus: "updated",
+      }),
+      expect.objectContaining({
+        accommodationId: "apt-2",
+        computedStatus: "out",
+        rpcStatus: "skipped",
+        reason: "duplicate_idempotency_key_in_execution",
+      }),
+    ]);
+    expect(result.summary).toMatchObject({
+      candidates: 1,
+      updated: 1,
+      skipped: 1,
+      errors: 0,
+    });
   });
 
   it("returns results in deterministic accommodation order", async () => {
@@ -535,35 +625,105 @@ describe("SyncAuthorizationStatusService", () => {
     });
   });
 
-  it("does not log operational comments or guest data during local classification", async () => {
+  it("logs only safe diagnostic structure for classification and sync events", async () => {
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
-    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
-    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const sensitiveBlock = productionLikeOperationalBlock("apt-1", {
+      id: "block-in",
+      reference: "block-ref",
+      email: "test@example.com",
+      phone: "+55 21 99999-9999",
+      document: "123.456.789-00",
+    });
     const service = buildService(
-      [booking("apt-1", BookingStatus.CONFIRMED, { id: "checkout-real" })],
-      [booking("apt-1", BookingStatus.CONFIRMED, {
-        id: "block-in",
-        bookingType: "MAINTENANCE",
-        comment: "sensitive operational comment",
-        guest: { name: "Sensitive Guest" },
-        email: "guest@example.com",
-        phone: "+55 11 99999-9999",
-      })],
-      async () => ({ status: "updated" }),
+      [
+        booking("apt-1", BookingStatus.CONFIRMED, {
+          id: "checkout-real",
+          guest: { name: "Test Guest" },
+          email: "test@example.com",
+          phone: "+55 21 99999-9999",
+          document: "123.456.789-00",
+        }),
+        booking("apt-2", BookingStatus.CONFIRMED, {
+          id: "dup-checkout",
+          reference: "dup-ref",
+        }),
+        booking("apt-2", BookingStatus.CONFIRMED, {
+          id: "dup-checkout",
+          reference: "dup-ref",
+        }),
+        booking("apt-3", BookingStatus.CONFIRMED, {
+          id: "ambiguous-a",
+          reference: "ambiguous-a",
+        }),
+        booking("apt-3", BookingStatus.CONFIRMED, {
+          id: "ambiguous-b",
+          reference: "ambiguous-b",
+        }),
+      ],
+      [
+        sensitiveBlock,
+        booking("apt-4", BookingStatus.CONFIRMED, {
+          id: "unknown-in",
+          amount: 0,
+          email: "test@example.com",
+          phone: "+55 21 99999-9999",
+          document: "123.456.789-00",
+        }),
+      ],
+      async (input) => {
+        if (input.accommodationId === "apt-1") {
+          throw new Error("PineOS failure without secrets");
+        }
+        return { status: "updated" };
+      },
     );
 
     await service.sync(DATE);
 
-    const logged = [
-      ...logSpy.mock.calls,
-      ...warnSpy.mock.calls,
-      ...errorSpy.mock.calls,
-    ].flat().map((item) => String(item)).join(" ");
+    const loggedObjects = logSpy.mock.calls
+      .filter((call) => call[0] === "[AuthorizationSync]")
+      .map((call) => call[1]);
+    const logged = JSON.stringify(loggedObjects);
 
-    expect(logged).not.toContain("sensitive operational comment");
-    expect(logged).not.toContain("Sensitive Guest");
+    expect(loggedObjects).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        event: "operational_block",
+        calendarRecordKind: "OPERATIONAL_BLOCK",
+        hasComment: true,
+        topLevelFieldNames: expect.arrayContaining(["client", "comment"]),
+        classificationSignals: expect.objectContaining({
+          hasComment: true,
+          hasPlaceholderOccupancyPattern: true,
+        }),
+      }),
+      expect.objectContaining({
+        event: "unknown_calendar_record",
+        calendarRecordKind: "UNKNOWN",
+        hasComment: false,
+      }),
+      expect.objectContaining({
+        event: "duplicate_suppressed",
+        reason: "duplicate_stable_identity",
+      }),
+      expect.objectContaining({
+        event: "accommodation_skipped",
+        reason: "ambiguous_multiple_checkouts",
+      }),
+      expect.objectContaining({
+        event: "pineos_sync_error",
+        reason: "PineOS failure without secrets",
+      }),
+    ]));
+
+    expect(logged).toContain('"hasComment":true');
+    expect(logged).not.toContain("Test Guest");
+    expect(logged).not.toContain("test@example.com");
+    expect(logged).not.toContain("+55 21 99999-9999");
+    expect(logged).not.toContain("Dedetização");
+    expect(logged).not.toContain("123.456.789-00");
     expect(logged).not.toContain("guest@example.com");
-    expect(logged).not.toContain("+55 11 99999-9999");
+    expect(logged).not.toContain("Sensitive Guest");
+    expect(logged).not.toContain("sensitive operational comment");
   });
 
   it("keeps summary counters semantics for local skips and candidates", async () => {
@@ -716,6 +876,230 @@ describe("SyncAuthorizationStatusService", () => {
     expect(calls[0].payload).toMatchObject({
       booking_in_id: null,
       classification: "GUEST_CHECKOUT_ONLY",
+    });
+  });
+
+  it("sends out when a real checkout is followed by a production-like operational block", async () => {
+    const calls: AuthorizationSyncPayload[] = [];
+    const service = buildService(
+      [booking("apt-1", BookingStatus.CONFIRMED, {
+        id: "checkout-real",
+        reference: "checkout-real",
+        guest: { name: "Fictional Guest" },
+      })],
+      [productionLikeOperationalBlock("apt-1", {
+        id: "production-block-in",
+        reference: "production-block-in",
+      })],
+      async (input) => {
+        calls.push(input);
+        return { status: "updated" };
+      },
+    );
+
+    const result = await service.sync(DATE);
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0].authorizationStatus).toBe("out");
+    expect(calls[0].authorizationStatus).not.toBe("tim");
+    expect(calls[0].payload).toMatchObject({
+      booking_out_id: "checkout-real",
+      booking_in_id: null,
+      classification: "GUEST_CHECKOUT_ONLY",
+      operational_block: {
+        id: "production-block-in",
+        reference: "production-block-in",
+        arrival: DATE,
+        departure: DATE,
+        comment: "Dedetização",
+      },
+    });
+    expect(result.summary).toMatchObject({
+      operationalBlocksSkipped: 1,
+      candidates: 1,
+    });
+  });
+
+  it("does not send out when a production-like operational block is the only checkout", async () => {
+    const calls: AuthorizationSyncPayload[] = [];
+    const service = buildService(
+      [productionLikeOperationalBlock("apt-1", {
+        id: "production-block-out",
+        reference: "production-block-out",
+      })],
+      [],
+      async (input) => {
+        calls.push(input);
+        return { status: "updated" };
+      },
+    );
+
+    const result = await service.sync(DATE);
+
+    expect(calls).toHaveLength(0);
+    expect(result.summary).toMatchObject({
+      operationalBlocksSkipped: 1,
+      candidates: 0,
+      skipped: 1,
+    });
+    expect(result.results[0]).toMatchObject({
+      accommodationId: "apt-1",
+      computedStatus: null,
+      rpcStatus: "skipped",
+      reason: "operational_block",
+    });
+  });
+
+  it("does not send a PineOS call when a production-like operational block is the only checkin", async () => {
+    const calls: AuthorizationSyncPayload[] = [];
+    const service = buildService(
+      [],
+      [productionLikeOperationalBlock("apt-1", {
+        id: "production-block-in",
+        reference: "production-block-in",
+      })],
+      async (input) => {
+        calls.push(input);
+        return { status: "updated" };
+      },
+    );
+
+    const result = await service.sync(DATE);
+
+    expect(calls).toHaveLength(0);
+    expect(result.summary).toMatchObject({
+      operationalBlocksSkipped: 1,
+      candidates: 0,
+      skipped: 1,
+    });
+    expect(result.results).toEqual([
+      expect.objectContaining({
+        accommodationId: "apt-1",
+        computedStatus: null,
+        rpcStatus: "skipped",
+        reason: "operational_block",
+      }),
+    ]);
+  });
+
+  it("keeps duplicate production-like operational blocks from affecting a real checkout decision", async () => {
+    const calls: AuthorizationSyncPayload[] = [];
+    const duplicateBlock = productionLikeOperationalBlock("apt-1", {
+      id: "production-block-in",
+      reference: "production-block-in",
+    });
+    const service = buildService(
+      [booking("apt-1", BookingStatus.CONFIRMED, {
+        id: "checkout-real",
+        guest: { name: "Fictional Guest" },
+      })],
+      [duplicateBlock, { ...duplicateBlock }],
+      async (input) => {
+        calls.push(input);
+        return { status: "updated" };
+      },
+    );
+
+    const result = await service.sync(DATE);
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0].authorizationStatus).toBe("out");
+    expect(calls[0].payload).toMatchObject({
+      booking_in_id: null,
+      classification: "GUEST_CHECKOUT_ONLY",
+      operational_block: {
+        id: "production-block-in",
+        reference: "production-block-in",
+      },
+    });
+    expect(result.summary).toMatchObject({
+      duplicateCheckinsSuppressed: 1,
+      operationalBlocksSkipped: 1,
+      candidates: 1,
+    });
+  });
+
+  it("keeps OWNER checkins in the existing owner cleaning rules", async () => {
+    const calls: AuthorizationSyncPayload[] = [];
+    const service = buildService(
+      [booking("apt-1", BookingStatus.CONFIRMED, {
+        id: "guest-checkout",
+        guest: { name: "Fictional Guest" },
+      })],
+      [booking("apt-1", BookingStatus.OWNER, {
+        id: "owner-checkin",
+      })],
+      async (input) => {
+        calls.push(input);
+        return { status: "updated" };
+      },
+    );
+
+    await service.sync(DATE);
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0].authorizationStatus).toBe("tim");
+    expect(calls[0].payload).toMatchObject({
+      booking_out_id: "guest-checkout",
+      booking_in_id: "owner-checkin",
+      classification: "GUEST_TO_OWNER",
+    });
+  });
+
+  it("keeps the same decision when mixed real and operational records are provided in different order", async () => {
+    const checkout = booking("apt-1", BookingStatus.CONFIRMED, {
+      id: "checkout-real",
+      guest: { name: "Fictional Guest" },
+    });
+    const realCheckin = booking("apt-1", BookingStatus.CONFIRMED, {
+      id: "checkin-real",
+      reference: "checkin-real",
+      guest: { name: "Next Fictional Guest" },
+    });
+    const operationalBlock = productionLikeOperationalBlock("apt-1", {
+      id: "production-block-in",
+      reference: "production-block-in",
+    });
+    const buildScenario = (checkins: AvantioBooking[]) => {
+      const calls: AuthorizationSyncPayload[] = [];
+      const service = buildService([checkout], checkins, async (input) => {
+        calls.push(input);
+        return { status: "updated" };
+      });
+      return { calls, service };
+    };
+
+    const forward = buildScenario([operationalBlock, realCheckin]);
+    const reverse = buildScenario([realCheckin, operationalBlock]);
+
+    await forward.service.sync(DATE);
+    await reverse.service.sync(DATE);
+
+    expect(forward.calls).toHaveLength(1);
+    expect(reverse.calls).toHaveLength(1);
+    expect(forward.calls[0]).toMatchObject({
+      accommodationId: "apt-1",
+      authorizationStatus: "tim",
+    });
+    expect(reverse.calls[0]).toMatchObject({
+      accommodationId: "apt-1",
+      authorizationStatus: "tim",
+    });
+    expect(forward.calls[0].payload).toMatchObject({
+      booking_in_id: "checkin-real",
+      classification: "GUEST_TURNOVER",
+      operational_block: {
+        id: "production-block-in",
+        reference: "production-block-in",
+      },
+    });
+    expect(reverse.calls[0].payload).toMatchObject({
+      booking_in_id: "checkin-real",
+      classification: "GUEST_TURNOVER",
+      operational_block: {
+        id: "production-block-in",
+        reference: "production-block-in",
+      },
     });
   });
 
