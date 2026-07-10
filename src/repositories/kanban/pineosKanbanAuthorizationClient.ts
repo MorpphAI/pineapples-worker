@@ -7,6 +7,7 @@ export type AuthorizationSyncPayload = {
   propertyCode?: string | null;
   targetDate: string;
   authorizationStatus: AuthorizationSyncStatus;
+  idempotencyKey: string;
   payload: Record<string, unknown>;
 };
 
@@ -45,6 +46,7 @@ export class PineOSKanbanAuthorizationClient {
         targetDate: input.targetDate,
         authorizationStatus: input.authorizationStatus,
         authorizationSource: "avantio-status-sync",
+        idempotencyKey: input.idempotencyKey,
         payload: input.payload,
       }),
     });
@@ -60,9 +62,14 @@ export class PineOSKanbanAuthorizationClient {
     }
 
     if (!response.ok) {
-      throw new Error(`PineOS authorization sync failed: ${response.status} ${text}`);
+      throw new Error(`PineOS authorization sync failed: ${response.status} ${this.sanitizeErrorText(text)}`);
     }
 
     return parsed as AuthorizationSyncResult;
+  }
+
+  private sanitizeErrorText(text: string): string {
+    if (!text) return "";
+    return text.split(this.secret).join("[redacted]");
   }
 }

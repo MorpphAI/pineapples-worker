@@ -1,3 +1,11 @@
+export interface AvantioExternalData {
+  reference: string;
+  type?: unknown;
+  category?: unknown;
+  kind?: unknown;
+  [key: string]: unknown;
+}
+
 export interface AvantioBooking {
   id: string;
   id1: string;
@@ -20,9 +28,37 @@ export interface AvantioBooking {
   status: string;       
   companyId: string;
   accommodationId: string;
-  externalData: {
-    reference: string;
-  };
+  externalData: AvantioExternalData;
+  guest?: unknown;
+  guests?: unknown;
+  client?: unknown;
+  customer?: unknown;
+  tenant?: unknown;
+  holder?: unknown;
+  occupancy?: unknown;
+  adults?: unknown;
+  children?: unknown;
+  babies?: unknown;
+  guestsNumber?: unknown;
+  numberOfGuests?: unknown;
+  price?: unknown;
+  totalPrice?: unknown;
+  amount?: unknown;
+  totalAmount?: unknown;
+  value?: unknown;
+  comments?: unknown;
+  comment?: unknown;
+  notes?: unknown;
+  note?: unknown;
+  description?: unknown;
+  bookingType?: unknown;
+  reservationType?: unknown;
+  type?: unknown;
+  category?: unknown;
+  kind?: unknown;
+  source?: unknown;
+  channel?: unknown;
+  [key: string]: unknown;
 }
 
 export interface AvantioAccommodation {
