@@ -22,6 +22,7 @@ export default defineWorkersConfig({
 				miniflare: {
 					compatibilityFlags: ["experimental", "nodejs_compat"],
 					bindings: {
+						API_KEY: "test-key",
 						MIGRATIONS: migrations,
 					},
 				},

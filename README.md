@@ -51,9 +51,24 @@ Crie um arquivo `.dev.vars` na raiz do projeto (não comite este arquivo) com as
 AVANTIO_API_KEY=sua_chave_aqui
 AVANTIO_BASE_URL=https://api.avantio.pro/pms/v2
 API_KEY=sua_api_key_local
-PINEOS_KANBAN_AUTH_SYNC_URL=https://vshruwobguomqplpqnnk.supabase.co/functions/v1/kanban-authorization-sync
-PINEOS_KANBAN_AUTH_SYNC_SECRET=seu_secret_compartilhado_local
 ```
+
+### Decisões de autorização para Cange
+
+O Worker expõe decisões determinísticas, sem gravar em PineOS ou Cange:
+
+```http
+GET /v1/cange/authorization-decisions?date=YYYY-MM-DD
+POST /v1/cange/authorization-decisions
+```
+
+O corpo do `POST` aceita:
+
+```json
+{ "date": "YYYY-MM-DD" }
+```
+
+A rota legada `POST /v1/kanban/authorization-sync` foi desativada e retorna `410 Gone`.
 
 ### 3. Executando Localmente
 
@@ -162,7 +177,6 @@ npx wrangler deploy
 ```bash
 npx wrangler secret put API_KEY
 npx wrangler secret put AVANTIO_API_KEY
-npx wrangler secret put PINEOS_KANBAN_AUTH_SYNC_SECRET
 ```
 
 ### Ver Logs em Tempo Real
