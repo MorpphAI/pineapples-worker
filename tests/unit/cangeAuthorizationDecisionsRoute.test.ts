@@ -1,12 +1,15 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { AvantioApiGateway } from "../../src/apiGateways/avantio/getAppointments";
 import {
   CangeAuthorizationDecisions,
   todayInSaoPaulo,
 } from "../../src/controllers/v1/cange/authorizationDecisions/authorizationDecisions";
 import { RemovedKanbanAuthorizationSync } from "../../src/controllers/v1/kanban/syncAuthorizationStatus/syncAuthorizationStatus";
 import { CangeAuthorizationDecisionService } from "../../src/services/v1/cange/cangeAuthorizationDecisionService";
+import { AvantioBooking, BookingStatus } from "../../src/types/avantioTypes";
 
 const DATE = "2026-06-22";
+const PRODUCTION_DATE = "2026-07-11";
 
 type JsonResponse = {
   body: unknown;
@@ -37,6 +40,23 @@ function buildContext(input: {
     },
     json: (body: unknown, status = 200): JsonResponse => ({ body, status }),
   };
+}
+
+function sparseBooking(accommodationId: string, overrides: Record<string, unknown> = {}): AvantioBooking {
+  return {
+    id: `${accommodationId}-booking`,
+    creationDate: PRODUCTION_DATE,
+    createdAt: PRODUCTION_DATE,
+    updatedAt: PRODUCTION_DATE,
+    stayDates: {
+      arrival: PRODUCTION_DATE,
+      departure: PRODUCTION_DATE,
+    },
+    status: BookingStatus.CONFIRMED,
+    companyId: "company",
+    accommodationId,
+    ...overrides,
+  } as AvantioBooking;
 }
 
 beforeEach(() => {
@@ -180,6 +200,62 @@ describe("CangeAuthorizationDecisions route", () => {
 
   it("calculates Sao_Paulo today deterministically", () => {
     expect(todayInSaoPaulo(new Date("2026-06-22T02:30:00.000Z"))).toBe("2026-06-21");
+  });
+
+  it("returns 200 for sparse Avantio bookings without optional references or structural metadata", async () => {
+    vi.spyOn(AvantioApiGateway.prototype, "getCheckouts").mockResolvedValue([
+      sparseBooking("apt-1", {
+        guest: { id: "guest-out" },
+        id1: undefined,
+        reference: undefined,
+        externalData: undefined,
+        bookingType: undefined,
+        reservationType: undefined,
+        type: undefined,
+        category: undefined,
+        kind: undefined,
+        source: undefined,
+        channel: undefined,
+      }),
+    ]);
+    vi.spyOn(AvantioApiGateway.prototype, "getCheckins").mockResolvedValue([
+      sparseBooking("apt-2", {
+        value: "R$ 0,00",
+        client: "",
+        adults: 1,
+        children: 0,
+        babies: 0,
+        comment: "Dedetização",
+        id1: undefined,
+        reference: undefined,
+        externalData: undefined,
+      }),
+    ]);
+
+    const response = await new CangeAuthorizationDecisions().handle(buildContext({
+      method: "GET",
+      url: `http://local.test/v1/cange/authorization-decisions?date=${PRODUCTION_DATE}`,
+    }) as never);
+
+    expect(response.status).toBe(200);
+    expect(response.body).toMatchObject({
+      success: true,
+      mode: "decision_only",
+      date: PRODUCTION_DATE,
+      decisions: [
+        expect.objectContaining({
+          accommodationId: "apt-1",
+          internalStatus: "out",
+          cangeStatus: "OUT",
+        }),
+      ],
+      skipped: [
+        expect.objectContaining({
+          accommodationId: "apt-2",
+          reason: "operational_block",
+        }),
+      ],
+    });
   });
 });
 

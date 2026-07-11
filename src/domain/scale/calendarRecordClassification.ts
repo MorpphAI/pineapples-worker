@@ -219,9 +219,10 @@ function hasExplicitOperationalType(booking: AvantioBooking): boolean {
   values.push(booking.externalData?.type, booking.externalData?.category, booking.externalData?.kind);
 
   return values
-    .flatMap((value) => collectStrings(value))
+    .flatMap((value) => collectMarkerValues(value))
     .some((value) => {
       const normalized = normalizeMarker(value);
+      if (!normalized) return false;
       for (const marker of OPERATIONAL_TYPE_MARKERS) {
         if (normalized.includes(marker)) return true;
       }
@@ -235,9 +236,10 @@ function hasExplicitReservationType(booking: AvantioBooking): boolean {
   values.push(booking.externalData?.type, booking.externalData?.category, booking.externalData?.kind);
 
   return values
-    .flatMap((value) => collectStrings(value))
+    .flatMap((value) => collectMarkerValues(value))
     .some((value) => {
       const normalized = normalizeMarker(value);
+      if (!normalized) return false;
       if (isOperationalMarker(normalized)) return false;
       return isReservationMarker(normalized);
     });
@@ -253,9 +255,10 @@ function hasExternalReservationEvidenceSignal(booking: AvantioBooking): boolean 
   ];
 
   return values
-    .flatMap((value) => collectStrings(value))
+    .flatMap((value) => collectMarkerValues(value))
     .some((value) => {
       const normalized = normalizeMarker(value);
+      if (!normalized) return false;
       if (isGenericInternalReference(normalized, booking)) return false;
       return isReservationMarker(normalized);
     });
@@ -379,6 +382,19 @@ function collectStrings(value: unknown): string[] {
   return [];
 }
 
+function collectMarkerValues(value: unknown): string[] {
+  if (
+    typeof value !== "string"
+    && typeof value !== "number"
+    && typeof value !== "boolean"
+  ) {
+    return [];
+  }
+
+  const normalized = normalizeMarker(value);
+  return normalized ? [String(value)] : [];
+}
+
 function parseMoneyString(value: string): number | null {
   const cleaned = value
     .trim()
@@ -418,8 +434,16 @@ function hasOnlyLegacyFields(booking: AvantioBooking): boolean {
   return Object.keys(booking).every((key) => LEGACY_BOOKING_FIELDS.has(key));
 }
 
-function normalizeMarker(value: string): string {
-  return value
+function normalizeMarker(value: unknown): string {
+  if (
+    typeof value !== "string"
+    && typeof value !== "number"
+    && typeof value !== "boolean"
+  ) {
+    return "";
+  }
+
+  return String(value)
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
     .toUpperCase()

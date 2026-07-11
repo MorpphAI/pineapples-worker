@@ -61,14 +61,17 @@ export class CangeAuthorizationDecisions extends OpenAPIRoute {
       const result = await service.getDecisions(date);
       return c.json(result);
     } catch (error: unknown) {
-      console.error("[CangeAuthorizationDecisions] Erro ao calcular decisoes", {
-        message: error instanceof Error ? error.message : String(error),
+      console.error("[CangeAuthorizationDecisions]", {
+        event: "authorization_decision_runtime_error",
+        errorCode: "authorization_decision_runtime_error",
+        errorName: error instanceof Error ? error.name : "UnknownError",
       });
       return c.json({
         success: false,
         mode: "decision_only",
         date,
         error: "failed_to_build_authorization_decisions",
+        errorCode: "authorization_decision_runtime_error",
       }, 500);
     }
   }

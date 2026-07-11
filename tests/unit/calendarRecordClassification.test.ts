@@ -24,6 +24,23 @@ function booking(status: string, overrides: Partial<AvantioBooking> = {}): Avant
   };
 }
 
+function sparseBooking(status: string, overrides: Record<string, unknown> = {}): AvantioBooking {
+  return {
+    id: "booking-1",
+    creationDate: DATE,
+    createdAt: DATE,
+    updatedAt: DATE,
+    stayDates: {
+      arrival: DATE,
+      departure: DATE,
+    },
+    status,
+    companyId: "company",
+    accommodationId: "apt-1",
+    ...overrides,
+  } as AvantioBooking;
+}
+
 function productionLikeOperationalBlock(overrides: Partial<AvantioBooking> = {}): Partial<AvantioBooking> {
   return {
     value: "R$ 0,00",
@@ -187,5 +204,135 @@ describe("classifyCalendarRecord", () => {
 
     expect(result.kind).toBe("GUEST_STAY");
     expect(result.kind).not.toBe("OPERATIONAL_BLOCK");
+  });
+
+  it("does not throw when optional references are missing", () => {
+    expect(() => classifyCalendarRecord(sparseBooking(BookingStatus.CONFIRMED))).not.toThrow();
+
+    const result = classifyCalendarRecord(sparseBooking(BookingStatus.CONFIRMED));
+    expect(result.kind).toBe("GUEST_STAY");
+  });
+
+  it("does not throw when only externalData.reference is present", () => {
+    expect(() => classifyCalendarRecord(sparseBooking(BookingStatus.CONFIRMED, {
+      externalData: { reference: "AIRBNB-123" },
+    }))).not.toThrow();
+
+    const result = classifyCalendarRecord(sparseBooking(BookingStatus.CONFIRMED, {
+      externalData: { reference: "AIRBNB-123" },
+    }));
+    expect(result.kind).toBe("GUEST_STAY");
+    expect(result.signals.hasExternalReservationEvidence).toBe(true);
+  });
+
+  it("does not throw when structural fields are undefined", () => {
+    const result = classifyCalendarRecord(sparseBooking(BookingStatus.CONFIRMED, {
+      bookingType: undefined,
+      reservationType: undefined,
+      type: undefined,
+      category: undefined,
+      kind: undefined,
+      source: undefined,
+      channel: undefined,
+    }));
+
+    expect(result.kind).toBe("UNKNOWN");
+  });
+
+  it("does not throw when optional metadata fields are null", () => {
+    const result = classifyCalendarRecord(sparseBooking(BookingStatus.CONFIRMED, {
+      id1: null,
+      reference: null,
+      externalData: {
+        reference: null,
+        type: null,
+        category: null,
+        kind: null,
+        source: null,
+        channel: null,
+      },
+      bookingType: null,
+      reservationType: null,
+      type: null,
+      category: null,
+      kind: null,
+      source: null,
+      channel: null,
+    }));
+
+    expect(result.kind).toBe("UNKNOWN");
+  });
+
+  it("normalizes non-string primitive marker fields safely", () => {
+    const result = classifyCalendarRecord(sparseBooking(BookingStatus.CONFIRMED, {
+      bookingType: 123,
+      reservationType: false,
+      type: true,
+      category: 456,
+      kind: false,
+      source: 789,
+      channel: true,
+    }));
+
+    expect(result.kind).toBe("UNKNOWN");
+  });
+
+  it("ignores object and array values in generic marker fields", () => {
+    const result = classifyCalendarRecord(sparseBooking(BookingStatus.CONFIRMED, {
+      bookingType: { label: "MAINTENANCE" },
+      reservationType: ["AIRBNB"],
+      type: { value: "BLOCKED" },
+      category: ["RESERVATION"],
+      kind: { text: "GUEST" },
+      source: ["BOOKING"],
+      channel: { name: "AIRBNB" },
+      externalData: {
+        reference: { value: "AIRBNB-123" },
+        type: { label: "BLOCKED" },
+        category: ["UNAVAILABLE"],
+        kind: { value: "MAINTENANCE" },
+      },
+    }));
+
+    expect(result.kind).toBe("UNKNOWN");
+    expect(result.signals.explicitOperationalType).toBe(false);
+    expect(result.signals.hasExternalReservationEvidence).toBe(false);
+  });
+
+  it("keeps sparse production-like operational block as OPERATIONAL_BLOCK", () => {
+    const result = classifyCalendarRecord(sparseBooking(BookingStatus.CONFIRMED, {
+      ...productionLikeOperationalBlock(),
+      externalData: undefined,
+      id1: undefined,
+      reference: undefined,
+    }));
+
+    expect(result.kind).toBe("OPERATIONAL_BLOCK");
+  });
+
+  it("keeps sparse zero-value guest as GUEST_STAY", () => {
+    const result = classifyCalendarRecord(sparseBooking(BookingStatus.CONFIRMED, {
+      value: "R$ 0,00",
+      guest: { id: "guest-123", name: "Fictional Guest" },
+      adults: 1,
+      externalData: undefined,
+      id1: undefined,
+      reference: undefined,
+    }));
+
+    expect(result.kind).toBe("GUEST_STAY");
+  });
+
+  it("keeps sparse OWNER metadata as OWNER_STAY", () => {
+    const result = classifyCalendarRecord(sparseBooking(BookingStatus.OWNER, {
+      value: "R$ 0,00",
+      adults: 1,
+      comment: "owner use",
+      id1: undefined,
+      reference: undefined,
+      externalData: undefined,
+    }));
+
+    expect(result.kind).toBe("OWNER_STAY");
   });
 });
