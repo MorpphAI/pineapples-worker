@@ -7,7 +7,11 @@ const enabledEnv = { AVANTIO_API_KEY: "", AVANTIO_BASE_URL: "", AVANTIO_ACCOMMOD
 const disabledEnv = { ...enabledEnv, AVANTIO_ACCOMMODATION_CREATE_ENABLED: "false" };
 const candidate = { external_id: "existing", external_reference: "NSC314", label: "NSC314", remote_status: "ENABLED" };
 function gateway(matches: any[] = [], createResult: any = { externalId: "created", remoteStatus: "ENABLED", providerRequestId: "request-1" }) {
-  return { findAccommodationsByExternalReference: vi.fn().mockResolvedValue(matches), createAccommodation: vi.fn().mockResolvedValue(createResult) };
+  return {
+    findAccommodationsByExternalReference: vi.fn().mockResolvedValue(matches),
+    createAccommodation: vi.fn().mockResolvedValue(createResult),
+    upsertCreatedAccommodationInActiveIndex: vi.fn().mockResolvedValue(undefined),
+  };
 }
 
 describe("AvantioAccommodationService", () => {
@@ -29,7 +33,18 @@ describe("AvantioAccommodationService", () => {
   it("creates exactly once and requires the gateway external ID", async () => {
     const fake = gateway([]); const result = await new AvantioAccommodationService(enabledEnv, fake as any).create(property, 1);
     expect(result).toMatchObject({ status: 200, body: { success: true, outcome: "created", external_id: "created", provider_request_id: "request-1" } }); expect(fake.createAccommodation).toHaveBeenCalledTimes(1);
+    expect(fake.upsertCreatedAccommodationInActiveIndex).toHaveBeenCalledWith("created", "NSC314", "ENABLED");
     expect(CreateResponseSchema.safeParse(result.body).success).toBe(true);
+  });
+
+  it("preserves a successful create when the active-index upsert fails", async () => {
+    const fake = gateway([]);
+    fake.upsertCreatedAccommodationInActiveIndex.mockRejectedValue(new Error("D1 unavailable"));
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const result = await new AvantioAccommodationService(enabledEnv, fake as any).create(property, 1);
+    expect(result).toMatchObject({ status: 200, body: { outcome: "created", external_id: "created" } });
+    expect(fake.createAccommodation).toHaveBeenCalledTimes(1);
+    expect(warning).toHaveBeenCalledWith("[AvantioAccommodationService] accommodation_index_update_failed");
   });
 
   it.each([
@@ -72,6 +87,15 @@ describe("AvantioAccommodationService", () => {
     const service = new AvantioAccommodationService(enabledEnv, fake as any);
     const result = operation === "create" ? await service.create(property, 1) : await service.reconcile(property, 1);
     expect(result).toMatchObject({ status: 503, body: { operation, outcome: "temporarily_unavailable" } });
+    expect(fake.createAccommodation).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when the D1 index migration is absent", async () => {
+    const fake = gateway([]);
+    fake.findAccommodationsByExternalReference.mockRejectedValue(new AvantioProviderError("temporarily_unavailable", "accommodation_index_uninitialized", "migration missing", "not_started"));
+    const result = await new AvantioAccommodationService(enabledEnv, fake as any).create(property, 1);
+    expect(result).toMatchObject({ status: 503, body: { outcome: "temporarily_unavailable" } });
+    expect(result.body.errors).toContainEqual(expect.objectContaining({ code: "accommodation_index_uninitialized" }));
     expect(fake.createAccommodation).not.toHaveBeenCalled();
   });
 });

@@ -6,7 +6,7 @@ import { AvantioProviderError } from "./providerErrors";
 import { CreateOutcome, emptyNormalized, ReconcileOutcome } from "./publicContract";
 import { readiness } from "./readiness";
 
-type Gateway = Pick<AvantioApiGateway, "findAccommodationsByExternalReference" | "createAccommodation">;
+type Gateway = Pick<AvantioApiGateway, "findAccommodationsByExternalReference" | "createAccommodation"> & Partial<Pick<AvantioApiGateway, "upsertCreatedAccommodationInActiveIndex">>;
 export type ServiceResponse = { status: 200 | 409 | 422 | 503; body: ReturnType<typeof emptyNormalized> };
 
 function providerIssue(error: AvantioProviderError) {
@@ -60,6 +60,13 @@ export class AvantioAccommodationService {
 
     try {
       const created: AvantioCreateResult = await this.gateway.createAccommodation(ready.payload);
+      if (this.gateway.upsertCreatedAccommodationInActiveIndex) {
+        try {
+          await this.gateway.upsertCreatedAccommodationInActiveIndex(created.externalId, reference, created.remoteStatus);
+        } catch {
+          console.warn("[AvantioAccommodationService] accommodation_index_update_failed");
+        }
+      }
       const body = emptyNormalized("create", "created", propertyVersion, reference);
       body.success = true; body.external_id = created.externalId; body.remote_status = created.remoteStatus; body.provider_request_id = created.providerRequestId; body.payload_hash = ready.payload_hash; body.warnings = ready.warnings;
       return { status: 200, body };

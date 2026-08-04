@@ -1,18 +1,159 @@
-import { AvantioApiGateway } from "../../../apiGateways/avantio/getAppointments";
+import { AvantioAccommodationPage, AvantioApiGateway } from "../../../apiGateways/avantio/getAppointments";
+import { authoritativeAccommodationId } from "../../../integrations/avantio/accommodations/lookup";
+import { AvantioProviderError } from "../../../integrations/avantio/accommodations/providerErrors";
+import {
+    AccommodationIndexError,
+    AccommodationIndexRecord,
+    AccommodationIndexSyncState,
+    AccommodationReferenceIndexRepository,
+} from "../../../repositories/accommodation/accommodationReferenceIndexRepository";
 import { AccommodationRepository } from "../../../repositories/accommodation/accommodationRepository";
 import { Env } from "../../../types/configTypes";
+import { AvantioAccommodation } from "../../../types/avantioTypes";
 
-export class SyncAccommodationsService {
-    private avantioApiGateway: AvantioApiGateway;
-    private accommodationRepo: AccommodationRepository;
+export const ACCOMMODATION_SYNC_PAGE_SIZE = 10;
+export const ACCOMMODATION_SYNC_MAX_PROVIDER_REQUESTS = 20;
 
-    constructor(env: Env) {
-        this.avantioApiGateway = new AvantioApiGateway(env);
-        this.accommodationRepo = new AccommodationRepository(env.DB);
+export type AccommodationSyncResult = {
+    synced: number;
+    complete: boolean;
+    processed_records: number;
+    processed_pages: number;
+    active_generation_available: boolean;
+    building: boolean;
+};
+
+export class AccommodationSyncError extends Error {
+    constructor(public readonly code: string, message: string) {
+        super(message);
+        this.name = "AccommodationSyncError";
+    }
+}
+
+export class ProviderSubrequestBudget {
+    private used = 0;
+    constructor(private readonly maximum = ACCOMMODATION_SYNC_MAX_PROVIDER_REQUESTS) {}
+
+    consume(): void {
+        if (this.used >= this.maximum) {
+            throw new AccommodationSyncError("provider_subrequest_budget_exhausted", "O limite interno de consultas ao provedor foi atingido.");
+        }
+        this.used += 1;
     }
 
-    async sync(): Promise<number> {
-        const accommodations = await this.avantioApiGateway.getAccommodations();
-        return this.accommodationRepo.upsertMany(accommodations);
+    get count(): number { return this.used; }
+}
+
+type SyncGateway = Pick<AvantioApiGateway, "getAccommodationsPage" | "getAccommodationStrict">;
+type ReferenceIndex = Pick<AccommodationReferenceIndexRepository, "getState" | "startGeneration" | "resumeGeneration" | "markBatchFailed" | "savePage">;
+type AccommodationCache = Pick<AccommodationRepository, "upsertMany">;
+
+function optionalString(value: unknown): string | null {
+    return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function syncError(error: unknown): AccommodationSyncError {
+    if (error instanceof AccommodationSyncError) return error;
+    if (error instanceof AccommodationIndexError) return new AccommodationSyncError(error.code, error.message);
+    if (error instanceof AvantioProviderError) return new AccommodationSyncError(error.code, error.message);
+    return new AccommodationSyncError("accommodation_index_batch_failed", "A atualização incremental do índice falhou.");
+}
+
+export class SyncAccommodationsService {
+    private readonly avantioApiGateway: SyncGateway;
+    private readonly accommodationRepo: AccommodationCache;
+    private readonly referenceIndex: ReferenceIndex;
+
+    constructor(
+        env: Env,
+        gateway?: SyncGateway,
+        referenceIndex?: ReferenceIndex,
+        accommodationRepo?: AccommodationCache,
+        private readonly now: () => Date = () => new Date(),
+        private readonly generationId: () => string = () => crypto.randomUUID(),
+    ) {
+        this.avantioApiGateway = gateway ?? new AvantioApiGateway(env);
+        this.accommodationRepo = accommodationRepo ?? new AccommodationRepository(env.DB);
+        this.referenceIndex = referenceIndex ?? new AccommodationReferenceIndexRepository(env.DB);
+    }
+
+    async sync(): Promise<AccommodationSyncResult> {
+        const budget = new ProviderSubrequestBudget();
+        let state: AccommodationIndexSyncState | null = null;
+        try {
+            state = await this.referenceIndex.getState();
+            const now = this.now().toISOString();
+            if (!state.building_generation_id) {
+                state = await this.referenceIndex.startGeneration(this.generationId(), now);
+            } else if (state.status === "failed") {
+                state = await this.referenceIndex.resumeGeneration(now);
+            }
+            if (!state.building_generation_id) {
+                throw new AccommodationSyncError("accommodation_index_batch_failed", "Não foi possível iniciar uma geração do índice.");
+            }
+
+            budget.consume();
+            const page: AvantioAccommodationPage = await this.avantioApiGateway.getAccommodationsPage(state.next_page_url, ACCOMMODATION_SYNC_PAGE_SIZE);
+            if (page.records.length > ACCOMMODATION_SYNC_PAGE_SIZE) {
+                throw new AccommodationSyncError("provider_subrequest_budget_exhausted", "A página do provedor excedeu o limite interno.");
+            }
+
+            const inspectedAt = this.now().toISOString();
+            const indexRecords: AccommodationIndexRecord[] = [];
+            const cacheRecords: AvantioAccommodation[] = [];
+            for (const listRecord of page.records) {
+                const accommodationId = authoritativeAccommodationId(listRecord);
+                if (!accommodationId) {
+                    throw new AccommodationSyncError("accommodation_index_record_invalid", "Uma acomodação não possui ID autoritativo.");
+                }
+
+                let inspected = listRecord;
+                let externalReference: string | null;
+                if (typeof listRecord.externalReference === "string") {
+                    externalReference = listRecord.externalReference;
+                } else {
+                    budget.consume();
+                    try {
+                        inspected = await this.avantioApiGateway.getAccommodationStrict(accommodationId);
+                    } catch {
+                        throw new AccommodationSyncError("accommodation_index_detail_failed", "O detalhe de uma acomodação não pôde ser inspecionado.");
+                    }
+                    if (inspected.externalReference === undefined || inspected.externalReference === null) {
+                        externalReference = null;
+                    } else if (typeof inspected.externalReference === "string") {
+                        externalReference = inspected.externalReference;
+                    } else {
+                        throw new AccommodationSyncError("accommodation_index_detail_failed", "O detalhe contém uma referência externa inválida.");
+                    }
+                }
+
+                const merged = { ...listRecord, ...inspected, id: accommodationId } as unknown as AvantioAccommodation;
+                indexRecords.push({
+                    accommodation_id: accommodationId,
+                    external_reference: externalReference,
+                    name: optionalString(inspected.name ?? listRecord.name),
+                    remote_status: optionalString(inspected.status ?? listRecord.status),
+                    inspected_at: inspectedAt,
+                });
+                cacheRecords.push(merged);
+            }
+
+            await this.accommodationRepo.upsertMany(cacheRecords);
+            const saved = await this.referenceIndex.savePage(state.building_generation_id, indexRecords, page.nextPageUrl, inspectedAt);
+            return {
+                synced: indexRecords.length,
+                complete: !saved.building_generation_id && saved.active_generation_id === state.building_generation_id,
+                processed_records: saved.processed_records,
+                processed_pages: saved.processed_pages,
+                active_generation_available: !!saved.active_generation_id,
+                building: !!saved.building_generation_id,
+            };
+        } catch (error) {
+            const normalized = syncError(error);
+            if (state?.building_generation_id) {
+                try { await this.referenceIndex.markBatchFailed(normalized.code, this.now().toISOString()); } catch { /* preserve the original sanitized failure */ }
+            }
+            throw normalized;
+        }
     }
 }

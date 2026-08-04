@@ -1,63 +1,81 @@
+import { env as testEnv } from "cloudflare:test";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AvantioApiGateway } from "../../src/apiGateways/avantio/getAppointments";
 import { AvantioProviderError } from "../../src/integrations/avantio/accommodations";
-import { createSuccess, createSuccessMissingId, knownGoodCreatePayload, multipleExactMatches, providerTemporaryError, providerValidationError, rawWithExternalReference, rawWithoutReference } from "../fixtures/avantioAccommodationCreate";
+import { createSuccess, createSuccessMissingId, knownGoodCreatePayload, providerTemporaryError, providerValidationError, rawWithExternalReference } from "../fixtures/avantioAccommodationCreate";
 
-const env = { AVANTIO_API_KEY: "provider-secret", AVANTIO_BASE_URL: "https://provider.test", AVANTIO_ACCOMMODATION_CREATE_ENABLED: "true", API_KEY: "incoming-secret", DB: {} as D1Database };
+const env = { AVANTIO_API_KEY: "provider-secret", AVANTIO_BASE_URL: "https://provider.test", AVANTIO_ACCOMMODATION_CREATE_ENABLED: "true", AVANTIO_ACCOMMODATION_INDEX_MAX_AGE_SECONDS: "900", API_KEY: "incoming-secret", DB: testEnv.DB };
 function response(body: unknown, status = 200, headers: Record<string, string> = {}) { return new Response(typeof body === "string" ? body : JSON.stringify(body), { status, headers: { "content-type": "application/json", ...headers } }); }
 
-beforeEach(() => { vi.restoreAllMocks(); });
+async function setActiveIndex(rows: Array<{ id: string; reference: string; name?: string }> = [], completedAt = new Date().toISOString()) {
+  await testEnv.DB.prepare("DELETE FROM avantio_accommodation_reference_index").run();
+  await testEnv.DB.prepare(`UPDATE avantio_accommodation_index_sync_state SET active_generation_id = 'active', building_generation_id = NULL, next_page_url = NULL, status = 'complete', completed_at = ?, processed_records = ?, processed_pages = 1, last_error_code = NULL WHERE singleton_id = 1`).bind(completedAt, rows.length).run();
+  for (const row of rows) await testEnv.DB.prepare(`INSERT INTO avantio_accommodation_reference_index (generation_id, accommodation_id, external_reference, name, remote_status, inspected_at) VALUES ('active', ?, ?, ?, 'ENABLED', ?)`).bind(row.id, row.reference, row.name ?? row.reference, completedAt).run();
+}
+
+beforeEach(async () => {
+  vi.restoreAllMocks();
+  await testEnv.DB.prepare("DELETE FROM avantio_accommodation_reference_index").run();
+  await testEnv.DB.prepare(`UPDATE avantio_accommodation_index_sync_state SET active_generation_id = NULL, building_generation_id = NULL, next_page_url = NULL, status = 'idle', started_at = NULL, completed_at = NULL, processed_records = 0, processed_pages = 0, last_error_code = NULL WHERE singleton_id = 1`).run();
+});
 afterEach(() => { vi.unstubAllGlobals(); });
 
 describe("AvantioApiGateway accommodation methods", () => {
-  it("uses a list-level externalReference and compares it case-sensitively", async () => {
-    const fetchMock = vi.fn().mockImplementation(async () => response({ data: [rawWithExternalReference] }));
+  it("queries only the fresh active D1 generation and compares case-sensitively", async () => {
+    await setActiveIndex([{ id: "accommodation-123", reference: "NSC314" }]);
+    const fetchMock = vi.fn().mockImplementation(async () => response({ data: rawWithExternalReference }));
     vi.stubGlobal("fetch", fetchMock);
     const gateway = new AvantioApiGateway(env);
     expect(await gateway.findAccommodationsByExternalReference("NSC314")).toEqual([{ external_id: "accommodation-123", external_reference: "NSC314", label: "NSC314", remote_status: "ENABLED" }]);
     expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0][0]).toBe("https://provider.test/accommodations/accommodation-123");
 
     fetchMock.mockClear();
     expect(await gateway.findAccommodationsByExternalReference("nsc314")).toEqual([]);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("fetches strict detail when the list omits externalReference", async () => {
-    const fetchMock = vi.fn()
-      .mockResolvedValueOnce(response({ data: [rawWithoutReference] }))
-      .mockResolvedValueOnce(response({ data: { ...rawWithoutReference, externalReference: "NSC314" } }));
+  it("returns a fresh complete zero match without any provider scan", async () => {
+    await setActiveIndex();
+    await testEnv.DB.prepare(`INSERT INTO avantio_accommodation_reference_index (generation_id, accommodation_id, external_reference, name, remote_status, inspected_at) VALUES ('old-generation', 'old-id', 'UNIQUE', 'Old', 'ENABLED', ?)`).bind(new Date().toISOString()).run();
+    const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
-    expect(await new AvantioApiGateway(env).findAccommodationsByExternalReference("NSC314")).toEqual([
-      { external_id: "accommodation-456", external_reference: "NSC314", label: "Other", remote_status: "ENABLED" },
-    ]);
-    expect(fetchMock).toHaveBeenNthCalledWith(2, "https://provider.test/accommodations/accommodation-456", expect.objectContaining({ method: "GET" }));
-  });
-
-  it("returns complete zero matches only after detail confirms no externalReference", async () => {
-    const fetchMock = vi.fn()
-      .mockResolvedValueOnce(response({ data: [rawWithoutReference] }))
-      .mockResolvedValueOnce(response({ data: rawWithoutReference }));
-    vi.stubGlobal("fetch", fetchMock);
-    expect(await new AvantioApiGateway(env).findAccommodationsByExternalReference("NSC314")).toEqual([]);
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-  });
-
-  it("fails closed when detail lookup fails", async () => {
-    const fetchMock = vi.fn()
-      .mockResolvedValueOnce(response({ data: [rawWithoutReference] }))
-      .mockResolvedValueOnce(response({}, 503));
-    vi.stubGlobal("fetch", fetchMock);
-    await expect(new AvantioApiGateway(env).findAccommodationsByExternalReference("NSC314")).rejects.toMatchObject({ kind: "temporarily_unavailable", status: 503 });
+    expect(await new AvantioApiGateway(env).findAccommodationsByExternalReference("UNIQUE")).toEqual([]);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it.each([
-    ["galleryId-only", { galleryId: "gallery-only", name: "Gallery", status: "ENABLED" }],
-    ["missing-ID", { name: "No ID", status: "ENABLED" }],
-  ])("treats a %s list record as incomplete", async (_label, record) => {
-    const fetchMock = vi.fn().mockResolvedValue(response({ data: [record] }));
+    ["incomplete", null],
+    ["stale", new Date(Date.now() - 901_000).toISOString()],
+  ])("fails closed when the index is %s", async (_label, completedAt) => {
+    if (completedAt) await setActiveIndex([], completedAt);
+    const fetchMock = vi.fn(); vi.stubGlobal("fetch", fetchMock);
+    await expect(new AvantioApiGateway(env).findAccommodationsByExternalReference("NSC314")).rejects.toMatchObject({ kind: "temporarily_unavailable", code: "accommodation_index_refresh_required" });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("does not use an active generation while synchronization state is incomplete", async () => {
+    await setActiveIndex();
+    await testEnv.DB.prepare("UPDATE avantio_accommodation_index_sync_state SET status = 'building', building_generation_id = 'next'").run();
+    const fetchMock = vi.fn(); vi.stubGlobal("fetch", fetchMock);
+    await expect(new AvantioApiGateway(env).findAccommodationsByExternalReference("NSC314")).rejects.toMatchObject({ kind: "temporarily_unavailable", code: "accommodation_index_refresh_required" });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("invalidates a positive index match when live detail no longer matches", async () => {
+    await setActiveIndex([{ id: "accommodation-123", reference: "NSC314" }]);
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(response({ data: { ...rawWithExternalReference, externalReference: "CHANGED" } })));
+    await expect(new AvantioApiGateway(env).findAccommodationsByExternalReference("NSC314")).rejects.toMatchObject({ kind: "temporarily_unavailable", code: "accommodation_index_refresh_required" });
+  });
+
+  it("verifies each of multiple exact indexed matches without enumerating unrelated accommodations", async () => {
+    await setActiveIndex([{ id: "accommodation-123", reference: "NSC314" }, { id: "accommodation-789", reference: "NSC314" }]);
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(response({ data: rawWithExternalReference }))
+      .mockResolvedValueOnce(response({ data: { ...rawWithExternalReference, id: "accommodation-789" } }));
     vi.stubGlobal("fetch", fetchMock);
-    await expect(new AvantioApiGateway(env).findAccommodationsByExternalReference("NSC314")).rejects.toMatchObject({ kind: "temporarily_unavailable", code: "missing_authoritative_accommodation_id" });
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(await new AvantioApiGateway(env).findAccommodationsByExternalReference("NSC314")).toHaveLength(2);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
   it.each([
@@ -79,23 +97,6 @@ describe("AvantioApiGateway accommodation methods", () => {
   it("normalizes strict detail network failure", async () => {
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new TypeError("offline")));
     await expect(new AvantioApiGateway(env).getAccommodationStrict("accommodation-1")).rejects.toMatchObject({ kind: "temporarily_unavailable", code: "provider_detail_network_failure" });
-  });
-
-  it("returns multiple exact matches", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(response({ data: multipleExactMatches })));
-    expect(await new AvantioApiGateway(env).findAccommodationsByExternalReference("NSC314")).toHaveLength(2);
-  });
-
-  it("preserves existing _links.next pagination for exact lookup", async () => {
-    const fetchMock = vi.fn()
-      .mockResolvedValueOnce(response({ data: [rawWithoutReference], _links: { next: "https://provider.test/accommodations?page=2" } }))
-      .mockResolvedValueOnce(response({ data: [rawWithExternalReference] }))
-      .mockResolvedValueOnce(response({ data: rawWithoutReference }));
-    vi.stubGlobal("fetch", fetchMock);
-    expect(await new AvantioApiGateway(env).findAccommodationsByExternalReference("NSC314")).toHaveLength(1);
-    expect(fetchMock).toHaveBeenCalledTimes(3);
-    expect(fetchMock.mock.calls[1][0]).toBe("https://provider.test/accommodations?page=2");
-    expect(fetchMock.mock.calls[2][0]).toBe("https://provider.test/accommodations/accommodation-456");
   });
 
   it("POSTs the validated payload once and parses response.data.id", async () => {

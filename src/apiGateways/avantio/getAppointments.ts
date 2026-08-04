@@ -3,16 +3,29 @@ import { Env } from "../../types/configTypes";
 import { AvantioAccommodationCreateRequest, AvantioAccommodationCreateRequestSchema, AvantioAccommodationCreateSuccessSchema } from "../../integrations/avantio/accommodations/createContract";
 import { authoritativeAccommodationId, AccommodationCandidate, accommodationToCandidate } from "../../integrations/avantio/accommodations/lookup";
 import { AvantioProviderError, classifyReceivedStatus } from "../../integrations/avantio/accommodations/providerErrors";
+import {
+    AccommodationIndexError,
+    AccommodationReferenceIndexRepository,
+    DEFAULT_ACCOMMODATION_INDEX_MAX_AGE_SECONDS,
+} from "../../repositories/accommodation/accommodationReferenceIndexRepository";
 
 export type AvantioCreateResult = { externalId: string; remoteStatus: string | null; providerRequestId: string | null };
+export type AvantioAccommodationPage = { records: Array<Record<string, unknown>>; nextPageUrl: string | null };
 
 export class AvantioApiGateway {
     private apiKey: string;
     private baseUrl: string;
+    private referenceIndex: AccommodationReferenceIndexRepository;
+    private indexMaxAgeSeconds: number;
 
     constructor(env: Env) {
         this.apiKey = env.AVANTIO_API_KEY;
         this.baseUrl = env.AVANTIO_BASE_URL;
+        this.referenceIndex = new AccommodationReferenceIndexRepository(env.DB);
+        const configuredMaxAge = Number(env.AVANTIO_ACCOMMODATION_INDEX_MAX_AGE_SECONDS);
+        this.indexMaxAgeSeconds = Number.isFinite(configuredMaxAge) && configuredMaxAge > 0
+            ? Math.floor(configuredMaxAge)
+            : DEFAULT_ACCOMMODATION_INDEX_MAX_AGE_SECONDS;
     }
 
     private async fetchAllPages<T>(initialUrl: string): Promise<T[]> {
@@ -50,59 +63,6 @@ export class AvantioApiGateway {
         }
 
         console.log(`[AvantioService] Busca finalizada. Total de itens: ${allItems.length}`);
-        return allItems;
-    }
-
-    private async fetchAllAccommodationPagesStrict(initialUrl: string): Promise<Array<Record<string, unknown>>> {
-        const allItems: Array<Record<string, unknown>> = [];
-        let nextUrl: string | null = initialUrl;
-
-        while (nextUrl) {
-            let response: Response;
-            try {
-                response = await fetch(nextUrl, {
-                    method: "GET",
-                    headers: { "X-Avantio-Auth": this.apiKey, "accept": "application/json" },
-                });
-            } catch {
-                throw new AvantioProviderError("temporarily_unavailable", "provider_lookup_network_failure", "A consulta de acomodações à Avantio falhou temporariamente.", "fetch_invoked");
-            }
-
-            const providerRequestId = response.headers.get("x-avantio-request-id") ?? response.headers.get("x-request-id") ?? response.headers.get("request-id");
-            let responseText: string;
-            try {
-                responseText = await response.text();
-            } catch {
-                const kind = response.ok ? "temporarily_unavailable" : classifyReceivedStatus(response.status);
-                throw new AvantioProviderError(kind, response.ok ? "provider_lookup_body_unreadable" : `provider_http_${response.status}`, "A resposta da consulta de acomodações não pôde ser lida.", "response_received", response.status, providerRequestId);
-            }
-            if (!response.ok) {
-                throw new AvantioProviderError(classifyReceivedStatus(response.status), `provider_http_${response.status}`, "A Avantio rejeitou ou não conseguiu processar a consulta.", "body_received", response.status, providerRequestId);
-            }
-
-            let payload: unknown;
-            try {
-                payload = JSON.parse(responseText);
-            } catch {
-                throw new AvantioProviderError("temporarily_unavailable", "malformed_provider_json", "A Avantio retornou JSON inválido na consulta de acomodações.", "body_received", response.status, providerRequestId);
-            }
-            if (!payload || typeof payload !== "object" || !Array.isArray((payload as Record<string, unknown>).data)) {
-                throw new AvantioProviderError("temporarily_unavailable", "invalid_accommodation_list_response", "A resposta da lista de acomodações não contém dados válidos.", "body_received", response.status, providerRequestId);
-            }
-
-            for (const item of (payload as { data: unknown[] }).data) {
-                if (!item || typeof item !== "object" || Array.isArray(item)) {
-                    throw new AvantioProviderError("temporarily_unavailable", "invalid_accommodation_list_record", "A lista de acomodações contém um registro que não pode ser inspecionado.", "body_received", response.status, providerRequestId);
-                }
-                allItems.push(item as Record<string, unknown>);
-            }
-            const next = (payload as { _links?: { next?: unknown } })._links?.next;
-            if (next !== undefined && next !== null && typeof next !== "string") {
-                throw new AvantioProviderError("temporarily_unavailable", "invalid_accommodation_pagination", "A paginação da lista de acomodações é inválida.", "body_received", response.status, providerRequestId);
-            }
-            nextUrl = typeof next === "string" && next.length > 0 ? next : null;
-        }
-
         return allItems;
     }
 
@@ -145,6 +105,58 @@ export class AvantioApiGateway {
         }
 
         return accommodations;
+    }
+
+    async getAccommodationsPage(nextPageUrl: string | null, pageSize = 10): Promise<AvantioAccommodationPage> {
+        const boundedPageSize = Math.max(1, Math.min(10, Math.floor(pageSize)));
+        const url = nextPageUrl ? new URL(nextPageUrl) : new URL(`${this.baseUrl}/accommodations`);
+        url.searchParams.set("pagination_size", String(boundedPageSize));
+
+        let response: Response;
+        try {
+            response = await fetch(url.toString(), {
+                method: "GET",
+                headers: { "X-Avantio-Auth": this.apiKey, "accept": "application/json" },
+            });
+        } catch {
+            throw new AvantioProviderError("temporarily_unavailable", "accommodation_index_batch_failed", "A página de acomodações não pôde ser consultada.", "fetch_invoked");
+        }
+
+        const providerRequestId = response.headers.get("x-avantio-request-id") ?? response.headers.get("x-request-id") ?? response.headers.get("request-id");
+        let responseText: string;
+        try {
+            responseText = await response.text();
+        } catch {
+            throw new AvantioProviderError("temporarily_unavailable", "accommodation_index_batch_failed", "A resposta da página de acomodações não pôde ser lida.", "response_received", response.status, providerRequestId);
+        }
+        if (!response.ok) {
+            throw new AvantioProviderError("temporarily_unavailable", "accommodation_index_batch_failed", "A Avantio não conseguiu fornecer a página de acomodações.", "body_received", response.status, providerRequestId);
+        }
+
+        let payload: unknown;
+        try {
+            payload = JSON.parse(responseText);
+        } catch {
+            throw new AvantioProviderError("temporarily_unavailable", "accommodation_index_batch_failed", "A Avantio retornou uma página de acomodações inválida.", "body_received", response.status, providerRequestId);
+        }
+        if (!payload || typeof payload !== "object" || !Array.isArray((payload as Record<string, unknown>).data)) {
+            throw new AvantioProviderError("temporarily_unavailable", "accommodation_index_batch_failed", "A página de acomodações não contém dados válidos.", "body_received", response.status, providerRequestId);
+        }
+        const records: Array<Record<string, unknown>> = [];
+        for (const item of (payload as { data: unknown[] }).data) {
+            if (!item || typeof item !== "object" || Array.isArray(item)) {
+                throw new AvantioProviderError("temporarily_unavailable", "accommodation_index_record_invalid", "A página contém um registro de acomodação inválido.", "body_received", response.status, providerRequestId);
+            }
+            records.push(item as Record<string, unknown>);
+        }
+        if (records.length > boundedPageSize) {
+            throw new AvantioProviderError("temporarily_unavailable", "provider_subrequest_budget_exhausted", "A página excedeu o limite interno de registros.", "body_received", response.status, providerRequestId);
+        }
+        const next = (payload as { _links?: { next?: unknown } })._links?.next;
+        if (next !== undefined && next !== null && typeof next !== "string") {
+            throw new AvantioProviderError("temporarily_unavailable", "accommodation_index_batch_failed", "A paginação de acomodações é inválida.", "body_received", response.status, providerRequestId);
+        }
+        return { records, nextPageUrl: typeof next === "string" && next.trim() ? next : null };
     }
 
     async getAccommodation(accommodationId: string): Promise<AvantioAccommodation | null> {
@@ -212,38 +224,45 @@ export class AvantioApiGateway {
             throw new AvantioProviderError("temporarily_unavailable", "missing_accommodation_detail_data", "A resposta do detalhe da acomodação não contém dados válidos.", "body_received", response.status, providerRequestId);
         }
 
-        return { ...(data as Record<string, unknown>), id: authoritativeAccommodationId(data as Record<string, unknown>) ?? accommodationId };
+        return data as Record<string, unknown>;
     }
 
     async findAccommodationsByExternalReference(reference: string): Promise<AccommodationCandidate[]> {
-        const url = new URL(`${this.baseUrl}/accommodations`);
-        url.searchParams.append("pagination_size", "50");
-        const records = await this.fetchAllAccommodationPagesStrict(url.toString());
-        const matches: AccommodationCandidate[] = [];
-
-        for (const record of records) {
-            const accommodationId = authoritativeAccommodationId(record);
-            if (!accommodationId) {
-                throw new AvantioProviderError("temporarily_unavailable", "missing_authoritative_accommodation_id", "A consulta exata ficou incompleta porque uma acomodação não possui ID autoritativo.", "body_received");
-            }
-
-            let inspected = record;
-            if (typeof record.externalReference !== "string") {
-                inspected = await this.getAccommodationStrict(accommodationId);
-                if (inspected.externalReference !== undefined && inspected.externalReference !== null && typeof inspected.externalReference !== "string") {
-                    throw new AvantioProviderError("temporarily_unavailable", "invalid_external_reference", "A referência externa da acomodação não pôde ser inspecionada com segurança.", "body_received");
-                }
-            }
-            if (typeof inspected.externalReference !== "string" || inspected.externalReference !== reference) continue;
-
-            const candidate = accommodationToCandidate({ ...inspected, id: accommodationId });
-            if (!candidate) {
-                throw new AvantioProviderError("temporarily_unavailable", "missing_authoritative_accommodation_id", "Uma correspondência exata não possui ID autoritativo.", "body_received");
-            }
-            matches.push(candidate);
+        let indexedMatches: AccommodationCandidate[];
+        try {
+            indexedMatches = await this.referenceIndex.findFreshExactMatches(reference, this.indexMaxAgeSeconds);
+        } catch (error) {
+            const code = error instanceof AccommodationIndexError ? error.code : "accommodation_index_refresh_required";
+            throw new AvantioProviderError("temporarily_unavailable", code, "O índice exato de acomodações precisa ser atualizado.", "not_started");
         }
 
-        return matches;
+        const verified: AccommodationCandidate[] = [];
+        for (const indexed of indexedMatches) {
+            try {
+                const live = await this.getAccommodationStrict(indexed.external_id);
+                const liveId = authoritativeAccommodationId(live);
+                if (liveId !== indexed.external_id || live.externalReference !== reference) {
+                    throw new Error("indexed_match_changed");
+                }
+                const candidate = accommodationToCandidate({ ...live, id: liveId });
+                if (!candidate) throw new Error("indexed_match_invalid");
+                verified.push(candidate);
+            } catch {
+                await this.referenceIndex.markRefreshRequired();
+                throw new AvantioProviderError("temporarily_unavailable", "accommodation_index_refresh_required", "Uma correspondência do índice não pôde ser confirmada ao vivo.", "fetch_invoked");
+            }
+        }
+        return verified;
+    }
+
+    async upsertCreatedAccommodationInActiveIndex(externalId: string, externalReference: string, remoteStatus: string | null): Promise<void> {
+        await this.referenceIndex.upsertIntoActiveGeneration({
+            accommodation_id: externalId,
+            external_reference: externalReference,
+            name: externalReference,
+            remote_status: remoteStatus,
+            inspected_at: new Date().toISOString(),
+        });
     }
 
     async createAccommodation(payload: AvantioAccommodationCreateRequest, timeoutMs = 15000): Promise<AvantioCreateResult> {

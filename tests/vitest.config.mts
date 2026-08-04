@@ -23,6 +23,7 @@ export default defineWorkersConfig({
 					compatibilityFlags: ["experimental", "nodejs_compat"],
 					bindings: {
 						API_KEY: "test-key",
+						AVANTIO_API_KEY: "test-provider-key",
 						MIGRATIONS: migrations,
 					},
 				},

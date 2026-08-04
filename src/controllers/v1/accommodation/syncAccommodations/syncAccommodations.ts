@@ -1,7 +1,7 @@
 import { OpenAPIRoute } from "chanfana";
 import { Context } from "hono";
 import { z } from "zod";
-import { SyncAccommodationsService } from "../../../../services/v1/accommodation/syncAccommodationsService";
+import { AccommodationSyncError, SyncAccommodationsService } from "../../../../services/v1/accommodation/syncAccommodationsService";
 import { Env } from "../../../../types/configTypes";
 
 export class SyncAccommodations extends OpenAPIRoute {
@@ -16,7 +16,20 @@ export class SyncAccommodations extends OpenAPIRoute {
                         schema: z.object({
                             success: z.boolean(),
                             synced: z.number(),
+                            complete: z.boolean(),
+                            processed_records: z.number(),
+                            processed_pages: z.number(),
+                            active_generation_available: z.boolean(),
+                            building: z.boolean(),
                         }),
+                    },
+                },
+            },
+            "503": {
+                description: "Sincronização incremental indisponível",
+                content: {
+                    "application/json": {
+                        schema: z.object({ success: z.literal(false), synced: z.literal(0), error: z.string() }),
                     },
                 },
             },
@@ -27,11 +40,12 @@ export class SyncAccommodations extends OpenAPIRoute {
         const service = new SyncAccommodationsService(c.env);
 
         try {
-            const synced = await service.sync();
-            return c.json({ success: true, synced }, 200);
-        } catch (error: any) {
-            console.error("[SyncAccommodations] Erro:", error);
-            return c.json({ success: false, error: error.message }, 500);
+            const result = await service.sync();
+            return c.json({ success: true, ...result }, 200);
+        } catch (error) {
+            const code = error instanceof AccommodationSyncError ? error.code : "accommodation_index_batch_failed";
+            console.error(`[SyncAccommodations] Falha sanitizada: ${code}`);
+            return c.json({ success: false as const, synced: 0 as const, error: code }, 503);
         }
     }
 }
