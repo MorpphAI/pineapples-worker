@@ -1,5 +1,5 @@
 {
   "success": true, "operation": "readiness", "outcome": "not_ready", "contract_version": "worker-accommodation-v1", "canonical_schema_version": 1, "property_version": 1,
   "payload_hash": null, "provider_request_id": null,
-  "errors": [{ "code": "provider_create_model_unavailable", "message": "O Worker não possui um modelo autoritativo de criação de acomodação.", "canonical_path": null, "provider_path": null, "section": "provider_contract" }], "warnings": []
+  "errors": [{ "code": "title_required", "message": "Informe o título da acomodação.", "canonical_path": "identification.title", "provider_path": "name", "section": "identification" }], "warnings": []
 }

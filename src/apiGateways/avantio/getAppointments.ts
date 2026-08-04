@@ -1,5 +1,10 @@
 import { AvantioAccommodation, AvantioBooking, AvantioResponse } from "../../types/avantioTypes";
 import { Env } from "../../types/configTypes";
+import { AvantioAccommodationCreateRequest, AvantioAccommodationCreateRequestSchema, AvantioAccommodationCreateSuccessSchema } from "../../integrations/avantio/accommodations/createContract";
+import { exactExternalReferenceMatches, AccommodationCandidate } from "../../integrations/avantio/accommodations/lookup";
+import { AvantioProviderError, classifyReceivedStatus } from "../../integrations/avantio/accommodations/providerErrors";
+
+export type AvantioCreateResult = { externalId: string; remoteStatus: string | null; providerRequestId: string | null };
 
 export class AvantioApiGateway {
     private apiKey: string;
@@ -25,13 +30,17 @@ export class AvantioApiGateway {
                 },
             });
 
+            const providerRequestId = response.headers.get("x-avantio-request-id") ?? response.headers.get("x-request-id") ?? response.headers.get("request-id");
+            const responseText = await response.text();
+
             if (!response.ok) {
-                const errorText = await response.text();
-                console.error(`[AvantioService] Erro na requisicao: ${response.status} - ${errorText}`);
-                throw new Error(`Falha ao buscar dados da Avantio: ${response.statusText}`);
+                console.error(`[AvantioService] Erro na requisicao: ${response.status}`);
+                throw new AvantioProviderError(classifyReceivedStatus(response.status), `provider_http_${response.status}`, "A Avantio rejeitou ou não conseguiu processar a consulta.", "body_received", response.status, providerRequestId);
             }
 
-            const payload = (await response.json()) as AvantioResponse<T>;
+            let payload: AvantioResponse<T>;
+            try { payload = JSON.parse(responseText) as AvantioResponse<T>; }
+            catch { throw new AvantioProviderError("invalid_provider_response", "malformed_provider_json", "A Avantio retornou JSON inválido.", "body_received", response.status, providerRequestId); }
 
             if (payload.data && payload.data.length > 0) {
                 allItems = allItems.concat(payload.data);
@@ -72,7 +81,7 @@ export class AvantioApiGateway {
         for (const raw of rawAccommodations) {
             const id = raw?.id ?? raw?.accommodationId ?? raw?.accommodation_id ?? raw?.galleryId;
             if (!id) {
-                console.warn("[AvantioService] Imovel ignorado na sincronizacao: payload sem id.", raw);
+                console.warn("[AvantioService] Imovel ignorado na sincronizacao: payload sem id.");
                 continue;
             }
 
@@ -112,5 +121,55 @@ export class AvantioApiGateway {
             console.error(`[AvantioService] Erro de rede ao buscar imovel ${accommodationId}`, error);
             return null;
         }
+    }
+
+    async findAccommodationsByExternalReference(reference: string): Promise<AccommodationCandidate[]> {
+        const accommodations = await this.getAccommodations();
+        return exactExternalReferenceMatches(accommodations, reference);
+    }
+
+    async createAccommodation(payload: AvantioAccommodationCreateRequest, timeoutMs = 15000): Promise<AvantioCreateResult> {
+        const validated = AvantioAccommodationCreateRequestSchema.safeParse(payload);
+        if (!validated.success) throw new AvantioProviderError("provider_rejected", "invalid_provider_payload", "Payload de criação inválido.", "not_started");
+
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), timeoutMs);
+        let response: Response;
+        try {
+            response = await fetch(`${this.baseUrl}/accommodations`, {
+                method: "POST",
+                headers: { "X-Avantio-Auth": this.apiKey, "accept": "application/json", "content-type": "application/json" },
+                body: JSON.stringify(validated.data),
+                signal: controller.signal,
+            });
+        } catch (error) {
+            const code = error instanceof DOMException && error.name === "AbortError" ? "provider_timeout_unknown" : "provider_network_outcome_unknown";
+            throw new AvantioProviderError("uncertain", code, "O resultado remoto da criação não pôde ser determinado.", "fetch_invoked");
+        } finally {
+            clearTimeout(timeout);
+        }
+
+        const providerRequestId = response.headers.get("x-avantio-request-id") ?? response.headers.get("x-request-id") ?? response.headers.get("request-id");
+        let text: string;
+        try {
+            text = await response.text();
+        } catch {
+            throw new AvantioProviderError("invalid_provider_response", "provider_body_unreadable", "A resposta da Avantio não pôde ser lida.", "response_received", response.status, providerRequestId);
+        }
+
+        let json: unknown = null;
+        if (text.trim()) {
+            try { json = JSON.parse(text); } catch {
+                throw new AvantioProviderError("invalid_provider_response", "malformed_provider_json", "A Avantio retornou JSON inválido.", "body_received", response.status, providerRequestId);
+            }
+        }
+        if (!response.ok) {
+            throw new AvantioProviderError(classifyReceivedStatus(response.status), `provider_http_${response.status}`, "A Avantio rejeitou ou não conseguiu processar a solicitação.", "body_received", response.status, providerRequestId);
+        }
+
+        const parsed = AvantioAccommodationCreateSuccessSchema.safeParse(json);
+        const externalId = parsed.success ? String(parsed.data.data.id).trim() : "";
+        if (!externalId) throw new AvantioProviderError("invalid_provider_response", "missing_external_id", "A resposta de sucesso não contém um ID de acomodação válido.", "body_received", response.status, providerRequestId);
+        return { externalId, remoteStatus: parsed.success && typeof parsed.data.data.status === "string" ? parsed.data.data.status : null, providerRequestId };
     }
 }

@@ -1,66 +1,63 @@
 import { SELF } from "cloudflare:test";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { AvantioApiGateway } from "../../src/apiGateways/avantio/getAppointments";
-import { canonicalProperty } from "../fixtures/canonicalPropertyV1";
+import { productionCanonicalProperty } from "../fixtures/avantioAccommodationCreate";
 
 const headers = { "content-type": "application/json", "x-api-key": "test-key" };
-const request = { request_id: "11111111-1111-4111-8111-111111111111", property_id: "22222222-2222-4222-8222-222222222222", property_version: 1, canonical_schema_version: 1, property: canonicalProperty };
+const request = { request_id: "11111111-1111-4111-8111-111111111111", property_id: "22222222-2222-4222-8222-222222222222", property_version: 1, canonical_schema_version: 1, property: productionCanonicalProperty };
+function post(path: string, body: unknown, authenticated = true) { return SELF.fetch(`http://local.test${path}`, { method: "POST", headers: authenticated ? headers : { "content-type": "application/json" }, body: JSON.stringify(body) }); }
 
-function post(path: string, body: unknown, authenticated = true) {
-  return SELF.fetch(`http://local.test${path}`, { method: "POST", headers: authenticated ? headers : { "content-type": "application/json" }, body: JSON.stringify(body) });
-}
+beforeEach(() => { vi.restoreAllMocks(); });
 
 describe("Avantio accommodation Phase 3 routes", () => {
-  it("returns deterministic not_ready diagnostics for a valid canonical request", async () => {
+  it("returns ready and never calls the provider", async () => {
+    const lookup = vi.spyOn(AvantioApiGateway.prototype, "findAccommodationsByExternalReference");
     const response = await post("/v1/avantio/accommodations/readiness", request);
-    const body = await response.json<any>();
     expect(response.status).toBe(200);
-    expect(body).toMatchObject({ success: true, operation: "readiness", outcome: "not_ready", contract_version: "worker-accommodation-v1", property_version: 1, payload_hash: null, provider_request_id: null });
-    expect(body.errors).toContainEqual(expect.objectContaining({ code: "provider_create_model_unavailable" }));
+    expect(await response.json<any>()).toMatchObject({ success: true, operation: "readiness", outcome: "ready", contract_version: "worker-accommodation-v1" });
+    expect(lookup).not.toHaveBeenCalled();
   });
 
-  it("returns canonical paths for structurally missing fields", async () => {
-    const response = await post("/v1/avantio/accommodations/readiness", { ...request, property: { identification: canonicalProperty.identification } });
+  it.each(["readiness", "create", "reconcile"])("preserves %s on validation failure", async (operation) => {
+    const body = operation === "create" ? { ...request, job_id: "33333333-3333-4333-8333-333333333333", property: {} } : { ...request, property: {} };
+    const response = await post(`/v1/avantio/accommodations/${operation}`, body);
     expect(response.status).toBe(422);
-    expect(await response.json<any>()).toMatchObject({ errors: [expect.objectContaining({ code: "invalid_canonical_request", canonical_path: "property.address" })] });
+    expect(await response.json<any>()).toMatchObject({ success: false, operation, outcome: "not_ready" });
   });
 
-  it("rejects sensitive nested keys with only the offending path", async () => {
-    const response = await post("/v1/avantio/accommodations/readiness", { ...request, property: { ...canonicalProperty, legacy_metadata: { nested: [{ Access_Code: "never-returned" }] } } });
-    const body = await response.json<any>();
-    expect(response.status).toBe(422);
-    expect(body.errors[0]).toMatchObject({ code: "sensitive_key_rejected", canonical_path: "property.legacy_metadata.nested[0].Access_Code" });
-    expect(JSON.stringify(body)).not.toContain("never-returned");
+  it("rejects sensitive nested keys without returning their values", async () => {
+    const response = await post("/v1/avantio/accommodations/readiness", { ...request, property: { ...productionCanonicalProperty, legacy_metadata: { access_code: "never-returned" } } });
+    const text = await response.text();
+    expect(response.status).toBe(422); expect(text).toContain("sensitive_key_rejected"); expect(text).not.toContain("never-returned");
   });
 
-  it("returns create_disabled and performs no provider lookup or POST", async () => {
-    const listSpy = vi.spyOn(AvantioApiGateway.prototype, "getAccommodations");
+  it("returns found_existing while creation is disabled and performs no POST", async () => {
+    vi.spyOn(AvantioApiGateway.prototype, "findAccommodationsByExternalReference").mockResolvedValue([{ external_id: "existing", external_reference: "NSC314", label: "NSC314", remote_status: "ENABLED" }]);
+    const create = vi.spyOn(AvantioApiGateway.prototype, "createAccommodation");
     const response = await post("/v1/avantio/accommodations/create", { ...request, job_id: "33333333-3333-4333-8333-333333333333" });
-    expect(response.status).toBe(503);
-    expect(await response.json<any>()).toMatchObject({ operation: "create", outcome: "create_disabled", external_reference: "PINE-1", contract_version: "worker-accommodation-v1" });
-    expect(listSpy).not.toHaveBeenCalled();
+    expect(response.status).toBe(200); expect(await response.json<any>()).toMatchObject({ outcome: "found_existing", external_id: "existing" }); expect(create).not.toHaveBeenCalled();
   });
 
-  it("fails reconciliation explicitly because no authoritative reference field exists", async () => {
-    const listSpy = vi.spyOn(AvantioApiGateway.prototype, "getAccommodations");
+  it("returns create_disabled after a zero-match lookup and performs no POST", async () => {
+    vi.spyOn(AvantioApiGateway.prototype, "findAccommodationsByExternalReference").mockResolvedValue([]);
+    const create = vi.spyOn(AvantioApiGateway.prototype, "createAccommodation");
+    const response = await post("/v1/avantio/accommodations/create", { ...request, job_id: "33333333-3333-4333-8333-333333333333" });
+    expect(response.status).toBe(503); expect(await response.json<any>()).toMatchObject({ outcome: "create_disabled" }); expect(create).not.toHaveBeenCalled();
+  });
+
+  it.each([[[], "not_found", 200], [[{ external_id: "one", external_reference: "NSC314", label: null, remote_status: null }], "found_one", 200], [[{ external_id: "one", external_reference: "NSC314", label: null, remote_status: null }, { external_id: "two", external_reference: "NSC314", label: null, remote_status: null }], "found_multiple", 409]] as const)("reconciles exact matches", async (candidates, outcome, status) => {
+    vi.spyOn(AvantioApiGateway.prototype, "findAccommodationsByExternalReference").mockResolvedValue(candidates as any);
+    const create = vi.spyOn(AvantioApiGateway.prototype, "createAccommodation");
     const response = await post("/v1/avantio/accommodations/reconcile", request);
-    expect(response.status).toBe(503);
-    expect(await response.json<any>()).toMatchObject({ operation: "reconcile", outcome: "temporarily_unavailable", errors: [expect.objectContaining({ code: "external_reference_field_unavailable" })] });
-    expect(listSpy).not.toHaveBeenCalled();
+    expect(response.status).toBe(status); expect(await response.json<any>()).toMatchObject({ operation: "reconcile", outcome }); expect(create).not.toHaveBeenCalled();
   });
 
-  it("rejects unauthenticated access", async () => {
-    expect((await post("/v1/avantio/accommodations/readiness", request, false)).status).toBe(401);
-  });
+  it("rejects unauthenticated access", async () => { expect((await post("/v1/avantio/accommodations/readiness", request, false)).status).toBe(401); });
 
-  it("publishes all Phase 3 paths without secrets or raw payload examples", async () => {
+  it("publishes explicit Phase 3 schemas without secrets", async () => {
     const response = await SELF.fetch("http://local.test/openapi.json", { headers: { "x-api-key": "test-key" } });
-    expect(response.status).toBe(200);
-    const document = await response.json<any>();
+    const document = await response.json<any>(); const serialized = JSON.stringify(document);
     for (const path of ["readiness", "create", "reconcile"]) expect(document.paths).toHaveProperty(`/v1/avantio/accommodations/${path}`);
-    const serialized = JSON.stringify(document);
-    expect(serialized).not.toContain("test-key");
-    expect(serialized).not.toContain("X-Avantio-Auth");
-    expect(serialized).not.toContain("avantio_payload");
+    expect(serialized).not.toContain("test-key"); expect(serialized).not.toContain("X-Avantio-Auth"); expect(serialized).not.toContain("avantio_payload");
   });
 });

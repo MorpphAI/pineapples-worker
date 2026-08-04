@@ -66,6 +66,11 @@ export interface AvantioAccommodation {
     galleryId: string;
     name: string;        
     status: AccommodationStatus;
+    externalReference?: string;
+    registryData?: {
+        registerReference?: string;
+        [key: string]: unknown;
+    };
     
     area?: {
         livingSpace?: {
@@ -75,6 +80,7 @@ export interface AvantioAccommodation {
     };
     
     location: AvantioLocation;
+    [key: string]: unknown;
 }
 
 export interface AvantioLocation {

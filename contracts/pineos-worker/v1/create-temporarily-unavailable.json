@@ -1,4 +1,4 @@
 {
-  "success": false, "operation": "create", "outcome": "temporarily_unavailable", "external_id": null, "external_reference": "PINE-1", "remote_status": null, "property_version": 1, "payload_hash": null,
-  "contract_version": "worker-accommodation-v1", "provider_request_id": null, "errors": [{ "code": "provider_temporarily_unavailable", "message": "A Avantio está temporariamente indisponível.", "canonical_path": null, "provider_path": null, "section": "provider" }], "warnings": [], "candidates": []
+  "success": false, "operation": "create", "outcome": "temporarily_unavailable", "external_id": null, "external_reference": "NSC314", "remote_status": null, "property_version": 1, "payload_hash": "ee9750ab7fa91d937d3c4746f53fe9f4e743458a9a8fb81c5a28f6b9901b6c86",
+  "contract_version": "worker-accommodation-v1", "provider_request_id": null, "errors": [{ "code": "provider_http_500", "message": "A Avantio rejeitou ou não conseguiu processar a solicitação.", "canonical_path": null, "provider_path": null, "section": "provider" }], "warnings": [], "candidates": []
 }

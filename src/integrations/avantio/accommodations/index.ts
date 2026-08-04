@@ -5,3 +5,7 @@ export * from "./providerContract";
 export * from "./mappings";
 export * from "./lookup";
 export * from "./publicContract";
+export * from "./createContract";
+export * from "./createMapper";
+export * from "./providerErrors";
+export * from "./service";

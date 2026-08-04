@@ -1,5 +1,5 @@
 {
-  "success": false, "operation": "create", "outcome": "conflict", "external_id": null, "external_reference": "PINE-1", "remote_status": null, "property_version": 1, "payload_hash": null,
+  "success": false, "operation": "create", "outcome": "conflict", "external_id": null, "external_reference": "NSC314", "remote_status": null, "property_version": 1, "payload_hash": "ee9750ab7fa91d937d3c4746f53fe9f4e743458a9a8fb81c5a28f6b9901b6c86",
   "contract_version": "worker-accommodation-v1", "provider_request_id": null, "errors": [{ "code": "multiple_remote_matches", "message": "Mais de uma acomodação foi encontrada.", "canonical_path": "identification.code", "provider_path": null, "section": "identification" }], "warnings": [],
-  "candidates": [{ "external_id": "avantio-id-1", "external_reference": "PINE-1", "label": "Apartamento", "remote_status": "ENABLED" }]
+  "candidates": [{ "external_id": "avantio-id-1", "external_reference": "NSC314", "label": "Apartamento", "remote_status": "ENABLED" }]
 }

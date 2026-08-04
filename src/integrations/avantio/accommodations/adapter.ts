@@ -1,1 +1,1 @@
-export { mapCanonicalToAuthoritativeReadShape } from "./mappings";
+export { mapCanonicalToAvantioCreate } from "./createMapper";
