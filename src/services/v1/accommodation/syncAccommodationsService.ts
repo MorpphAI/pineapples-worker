@@ -59,6 +59,10 @@ function syncError(error: unknown): AccommodationSyncError {
     return new AccommodationSyncError("accommodation_index_batch_failed", "A atualização incremental do índice falhou.");
 }
 
+function logSyncDiagnostic(stage: string, code: string): void {
+    console.error(`[AccommodationIndexSync] stage=${stage} code=${code}`);
+}
+
 export class SyncAccommodationsService {
     private readonly avantioApiGateway: SyncGateway;
     private readonly accommodationRepo: AccommodationCache;
@@ -138,8 +142,20 @@ export class SyncAccommodationsService {
                 cacheRecords.push(merged);
             }
 
-            await this.accommodationRepo.upsertMany(cacheRecords);
-            const saved = await this.referenceIndex.savePage(state.building_generation_id, indexRecords, page.nextPageUrl, inspectedAt);
+            try {
+                await this.accommodationRepo.upsertMany(cacheRecords);
+            } catch {
+                logSyncDiagnostic("d1_cache_write", "accommodation_index_cache_write_failed");
+                throw new AccommodationSyncError("accommodation_index_cache_write_failed", "Accommodation cache write failed.");
+            }
+
+            let saved: AccommodationIndexSyncState;
+            try {
+                saved = await this.referenceIndex.savePage(state.building_generation_id, indexRecords, page.nextPageUrl, inspectedAt);
+            } catch {
+                logSyncDiagnostic("d1_index_write", "accommodation_index_index_write_failed");
+                throw new AccommodationSyncError("accommodation_index_index_write_failed", "Accommodation index write failed.");
+            }
             return {
                 synced: indexRecords.length,
                 complete: !saved.building_generation_id && saved.active_generation_id === state.building_generation_id,

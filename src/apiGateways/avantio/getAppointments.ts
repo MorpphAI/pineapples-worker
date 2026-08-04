@@ -12,6 +12,20 @@ import {
 export type AvantioCreateResult = { externalId: string; remoteStatus: string | null; providerRequestId: string | null };
 export type AvantioAccommodationPage = { records: Array<Record<string, unknown>>; nextPageUrl: string | null };
 
+function sanitizedDiagnosticValue(value: string | null): string | null {
+    if (!value) return null;
+    const sanitized = value.replace(/[^A-Za-z0-9._:-]/g, "_").slice(0, 128);
+    return sanitized || null;
+}
+
+function logAccommodationIndexDiagnostic(stage: string, code: string, status: number | null = null, providerRequestId: string | null = null): void {
+    const fields = [`stage=${stage}`, `code=${code}`];
+    if (status !== null) fields.push(`status=${status}`);
+    const safeRequestId = sanitizedDiagnosticValue(providerRequestId);
+    if (safeRequestId) fields.push(`provider_request_id=${safeRequestId}`);
+    console.error(`[AvantioAccommodationIndex] ${fields.join(" ")}`);
+}
+
 export class AvantioApiGateway {
     private apiKey: string;
     private baseUrl: string;
@@ -109,8 +123,43 @@ export class AvantioApiGateway {
 
     async getAccommodationsPage(nextPageUrl: string | null, pageSize = 10): Promise<AvantioAccommodationPage> {
         const boundedPageSize = Math.max(1, Math.min(10, Math.floor(pageSize)));
-        const url = nextPageUrl ? new URL(nextPageUrl) : new URL(`${this.baseUrl}/accommodations`);
-        url.searchParams.set("pagination_size", String(boundedPageSize));
+        let listUrl: URL;
+        try {
+            listUrl = new URL(`${this.baseUrl.replace(/\/+$/, "")}/accommodations`);
+        } catch {
+            logAccommodationIndexDiagnostic("cursor_resolution", "accommodation_index_cursor_invalid");
+            throw new AvantioProviderError("temporarily_unavailable", "accommodation_index_cursor_invalid", "Invalid accommodation continuation cursor.", "request_built");
+        }
+
+        const validateCursor = (candidate: URL): void => {
+            const configuredBase = new URL(this.baseUrl);
+            const basePath = configuredBase.pathname.replace(/\/+$/, "") || "/";
+            const pathInsideBase = basePath === "/"
+                || candidate.pathname === basePath
+                || candidate.pathname.startsWith(`${basePath}/`);
+            if (candidate.protocol !== "https:"
+                || candidate.origin !== configuredBase.origin
+                || !pathInsideBase
+                || candidate.username
+                || candidate.password) {
+                logAccommodationIndexDiagnostic("cursor_validation", "accommodation_index_cursor_invalid");
+                throw new AvantioProviderError("temporarily_unavailable", "accommodation_index_cursor_invalid", "Unsafe accommodation continuation cursor.", "request_built");
+            }
+        };
+
+        let url: URL;
+        if (nextPageUrl) {
+            try {
+                url = new URL(nextPageUrl, listUrl);
+            } catch {
+                logAccommodationIndexDiagnostic("cursor_resolution", "accommodation_index_cursor_invalid");
+                throw new AvantioProviderError("temporarily_unavailable", "accommodation_index_cursor_invalid", "Invalid accommodation continuation cursor.", "request_built");
+            }
+            validateCursor(url);
+        } else {
+            url = listUrl;
+            url.searchParams.set("pagination_size", String(boundedPageSize));
+        }
 
         let response: Response;
         try {
@@ -119,6 +168,7 @@ export class AvantioApiGateway {
                 headers: { "X-Avantio-Auth": this.apiKey, "accept": "application/json" },
             });
         } catch {
+            logAccommodationIndexDiagnostic("provider_fetch", "accommodation_index_batch_failed");
             throw new AvantioProviderError("temporarily_unavailable", "accommodation_index_batch_failed", "A página de acomodações não pôde ser consultada.", "fetch_invoked");
         }
 
@@ -127,9 +177,11 @@ export class AvantioApiGateway {
         try {
             responseText = await response.text();
         } catch {
+            logAccommodationIndexDiagnostic("provider_response_read", "accommodation_index_batch_failed", response.status, providerRequestId);
             throw new AvantioProviderError("temporarily_unavailable", "accommodation_index_batch_failed", "A resposta da página de acomodações não pôde ser lida.", "response_received", response.status, providerRequestId);
         }
         if (!response.ok) {
+            logAccommodationIndexDiagnostic("provider_http", "accommodation_index_batch_failed", response.status, providerRequestId);
             throw new AvantioProviderError("temporarily_unavailable", "accommodation_index_batch_failed", "A Avantio não conseguiu fornecer a página de acomodações.", "body_received", response.status, providerRequestId);
         }
 
@@ -137,9 +189,11 @@ export class AvantioApiGateway {
         try {
             payload = JSON.parse(responseText);
         } catch {
+            logAccommodationIndexDiagnostic("provider_response_parse", "accommodation_index_batch_failed", response.status, providerRequestId);
             throw new AvantioProviderError("temporarily_unavailable", "accommodation_index_batch_failed", "A Avantio retornou uma página de acomodações inválida.", "body_received", response.status, providerRequestId);
         }
         if (!payload || typeof payload !== "object" || !Array.isArray((payload as Record<string, unknown>).data)) {
+            logAccommodationIndexDiagnostic("provider_response_parse", "accommodation_index_batch_failed", response.status, providerRequestId);
             throw new AvantioProviderError("temporarily_unavailable", "accommodation_index_batch_failed", "A página de acomodações não contém dados válidos.", "body_received", response.status, providerRequestId);
         }
         const records: Array<Record<string, unknown>> = [];
@@ -154,9 +208,25 @@ export class AvantioApiGateway {
         }
         const next = (payload as { _links?: { next?: unknown } })._links?.next;
         if (next !== undefined && next !== null && typeof next !== "string") {
+            logAccommodationIndexDiagnostic("cursor_resolution", "accommodation_index_cursor_invalid", response.status, providerRequestId);
+            throw new AvantioProviderError("temporarily_unavailable", "accommodation_index_cursor_invalid", "Invalid accommodation continuation cursor.", "body_received", response.status, providerRequestId);
+        }
+        if (next !== undefined && next !== null && typeof next !== "string") {
             throw new AvantioProviderError("temporarily_unavailable", "accommodation_index_batch_failed", "A paginação de acomodações é inválida.", "body_received", response.status, providerRequestId);
         }
-        return { records, nextPageUrl: typeof next === "string" && next.trim() ? next : null };
+        let resolvedNextPageUrl: string | null = null;
+        if (typeof next === "string" && next.trim()) {
+            let resolvedNext: URL;
+            try {
+                resolvedNext = new URL(next, url);
+            } catch {
+                logAccommodationIndexDiagnostic("cursor_resolution", "accommodation_index_cursor_invalid", response.status, providerRequestId);
+                throw new AvantioProviderError("temporarily_unavailable", "accommodation_index_cursor_invalid", "Invalid accommodation continuation cursor.", "body_received", response.status, providerRequestId);
+            }
+            validateCursor(resolvedNext);
+            resolvedNextPageUrl = resolvedNext.toString();
+        }
+        return { records, nextPageUrl: resolvedNextPageUrl };
     }
 
     async getAccommodation(accommodationId: string): Promise<AvantioAccommodation | null> {

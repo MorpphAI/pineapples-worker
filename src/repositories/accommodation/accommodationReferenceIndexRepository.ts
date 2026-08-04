@@ -152,7 +152,7 @@ export class AccommodationReferenceIndexRepository {
 
   async findFreshExactMatches(reference: string, maxAgeSeconds: number, now = new Date()): Promise<AccommodationCandidate[]> {
     const state = await this.getState();
-    if (state.status !== "complete" || !state.active_generation_id || !state.completed_at) {
+    if (!state.active_generation_id?.trim() || !state.completed_at) {
       throw new AccommodationIndexError("accommodation_index_refresh_required", "Conclua uma atualização completa do índice de acomodações.");
     }
     const completedAt = Date.parse(state.completed_at);

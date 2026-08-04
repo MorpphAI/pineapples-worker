@@ -114,7 +114,7 @@ describe("bounded incremental Avantio accommodation index", () => {
   it("resumes the stored cursor on a second invocation and activates only on the final page", async () => {
     await seedActive();
     const fetchMock = vi.fn()
-      .mockResolvedValueOnce(providerResponse({ data: [rawRecord("new-1", "ONE")], _links: { next: "https://provider.test/accommodations?page=2" } }))
+      .mockResolvedValueOnce(providerResponse({ data: [rawRecord("new-1", "ONE")], _links: { next: "?page=2&cursor=production-relative" } }))
       .mockResolvedValueOnce(providerResponse({ data: [rawRecord("new-2", "TWO")] }));
     vi.stubGlobal("fetch", fetchMock);
     const generation = "new-generation";
@@ -133,6 +133,29 @@ describe("bounded incremental Avantio accommodation index", () => {
     expect(completeState.active_generation_id).toBe(generation);
     expect(completeState.building_generation_id).toBeNull();
     expect((await testEnv.DB.prepare("SELECT COUNT(*) AS count FROM avantio_accommodation_reference_index WHERE generation_id = 'old-active'").first<{ count: number }>())?.count).toBe(0);
+  });
+
+  it("resumes a failed production-pattern generation from its stored relative page-2 cursor", async () => {
+    const now = new Date().toISOString();
+    await testEnv.DB.prepare(`
+      UPDATE avantio_accommodation_index_sync_state
+      SET building_generation_id = 'production-generation', next_page_url = '?page=2&cursor=stored',
+          status = 'failed', started_at = ?, updated_at = ?, processed_records = 10,
+          processed_pages = 1, last_error_code = 'accommodation_index_batch_failed'
+      WHERE singleton_id = 1
+    `).bind(now, now).run();
+    const fetchMock = vi.fn().mockResolvedValue(providerResponse({ data: [rawRecord("page-2", "PAGE-2")], _links: { next: "/accommodations?page=3&cursor=next" } }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await new SyncAccommodationsService(env as any).sync();
+    const state = await new AccommodationReferenceIndexRepository(testEnv.DB).getState();
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0][0]).toBe("https://provider.test/accommodations?page=2&cursor=stored");
+    expect(result).toMatchObject({ complete: false, processed_records: 11, processed_pages: 2, building: true });
+    expect(state.building_generation_id).toBe("production-generation");
+    expect(state.next_page_url).toBe("https://provider.test/accommodations?page=3&cursor=next");
+    expect(state.status).toBe("building");
   });
 
   it.each([

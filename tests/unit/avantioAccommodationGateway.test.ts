@@ -21,6 +21,69 @@ beforeEach(async () => {
 afterEach(() => { vi.unstubAllGlobals(); });
 
 describe("AvantioApiGateway accommodation methods", () => {
+  it.each([
+    ["absolute", "https://provider.test/pms/v2/accommodations?cursor=abs&page=2", "https://provider.test/pms/v2/accommodations?cursor=abs&page=2"],
+    ["root-relative", "/pms/v2/accommodations?cursor=root&page=2", "https://provider.test/pms/v2/accommodations?cursor=root&page=2"],
+    ["query-only", "?cursor=query&page=2", "https://provider.test/pms/v2/accommodations?cursor=query&page=2"],
+    ["path-relative", "accommodations?cursor=path&page=2", "https://provider.test/pms/v2/accommodations?cursor=path&page=2"],
+  ])("normalizes a %s provider next link to a safe absolute cursor", async (_format, next, expected) => {
+    const cursorEnv = { ...env, AVANTIO_BASE_URL: "https://provider.test/pms/v2" };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(response({ data: [], _links: { next } }))
+      .mockResolvedValueOnce(response({ data: [] }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const gateway = new AvantioApiGateway(cursorEnv);
+    const page = await gateway.getAccommodationsPage(null, 10);
+    const continuation = await gateway.getAccommodationsPage(page.nextPageUrl, 10);
+
+    expect(fetchMock.mock.calls[0][0]).toBe("https://provider.test/pms/v2/accommodations?pagination_size=10");
+    expect(fetchMock.mock.calls[1][0]).toBe(expected);
+    expect(page.nextPageUrl).toBe(expected);
+    expect(continuation.nextPageUrl).toBeNull();
+  });
+
+  it("follows an absolute continuation without rewriting any provider cursor parameters", async () => {
+    const cursorEnv = { ...env, AVANTIO_BASE_URL: "https://provider.test/pms/v2" };
+    const cursor = "https://provider.test/pms/v2/accommodations?token=a%2Fb&cursor=x%2By&page=2&pagination_size=7&token=second";
+    const fetchMock = vi.fn().mockResolvedValue(response({ data: [] }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await new AvantioApiGateway(cursorEnv).getAccommodationsPage(cursor, 10);
+
+    expect(fetchMock).toHaveBeenCalledWith(cursor, expect.objectContaining({ method: "GET" }));
+  });
+
+  it.each([
+    ["foreign origin", "https://evil.test/pms/v2/accommodations?page=2"],
+    ["non-HTTPS", "http://provider.test/pms/v2/accommodations?page=2"],
+    ["outside API base path", "https://provider.test/other/accommodations?page=2"],
+    ["unparseable", "http://["],
+  ])("rejects a %s continuation cursor before fetch", async (_label, cursor) => {
+    const cursorEnv = { ...env, AVANTIO_BASE_URL: "https://provider.test/pms/v2" };
+    const fetchMock = vi.fn();
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(new AvantioApiGateway(cursorEnv).getAccommodationsPage(cursor, 10)).rejects.toMatchObject({
+      kind: "temporarily_unavailable",
+      code: "accommodation_index_cursor_invalid",
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(JSON.stringify(errorSpy.mock.calls)).not.toContain(cursor);
+  });
+
+  it("rejects an unsafe provider-returned next link without exposing it in diagnostics", async () => {
+    const cursorEnv = { ...env, AVANTIO_BASE_URL: "https://provider.test/pms/v2" };
+    const rejected = "https://evil.test/pms/v2/accommodations?secret-cursor=value";
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(response({ data: [], _links: { next: rejected } })));
+
+    await expect(new AvantioApiGateway(cursorEnv).getAccommodationsPage(null, 10)).rejects.toMatchObject({ code: "accommodation_index_cursor_invalid" });
+    expect(JSON.stringify(errorSpy.mock.calls)).not.toContain(rejected);
+    expect(JSON.stringify(errorSpy.mock.calls)).not.toContain("secret-cursor");
+  });
+
   it("queries only the fresh active D1 generation and compares case-sensitively", async () => {
     await setActiveIndex([{ id: "accommodation-123", reference: "NSC314" }]);
     const fetchMock = vi.fn().mockImplementation(async () => response({ data: rawWithExternalReference }));
@@ -54,11 +117,11 @@ describe("AvantioApiGateway accommodation methods", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("does not use an active generation while synchronization state is incomplete", async () => {
+  it.each(["building", "failed"] as const)("keeps a fresh active generation queryable while synchronization is %s", async (status) => {
     await setActiveIndex();
-    await testEnv.DB.prepare("UPDATE avantio_accommodation_index_sync_state SET status = 'building', building_generation_id = 'next'").run();
+    await testEnv.DB.prepare("UPDATE avantio_accommodation_index_sync_state SET status = ?, building_generation_id = 'next'").bind(status).run();
     const fetchMock = vi.fn(); vi.stubGlobal("fetch", fetchMock);
-    await expect(new AvantioApiGateway(env).findAccommodationsByExternalReference("NSC314")).rejects.toMatchObject({ kind: "temporarily_unavailable", code: "accommodation_index_refresh_required" });
+    await expect(new AvantioApiGateway(env).findAccommodationsByExternalReference("NSC314")).resolves.toEqual([]);
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
