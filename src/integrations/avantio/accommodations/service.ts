@@ -15,7 +15,7 @@ function providerIssue(error: AvantioProviderError) {
 
 function lookupFailure(operation: "create" | "reconcile", propertyVersion: number, reference: string, error: unknown): ServiceResponse {
   const kind = error instanceof AvantioProviderError ? error.kind : "temporarily_unavailable";
-  const outcome: CreateOutcome | ReconcileOutcome = kind === "provider_rejected" || kind === "invalid_provider_response" ? "provider_rejected" : "temporarily_unavailable";
+  const outcome: CreateOutcome | ReconcileOutcome = kind === "provider_rejected" ? "provider_rejected" : "temporarily_unavailable";
   const body = emptyNormalized(operation, outcome, propertyVersion, reference);
   body.provider_request_id = error instanceof AvantioProviderError ? error.providerRequestId : null;
   body.errors.push(error instanceof AvantioProviderError ? providerIssue(error) : { code: "provider_temporarily_unavailable", message: "A consulta à Avantio falhou temporariamente.", canonical_path: null, provider_path: null, section: "provider" });
@@ -65,7 +65,9 @@ export class AvantioAccommodationService {
       return { status: 200, body };
     } catch (error) {
       if (!(error instanceof AvantioProviderError)) return lookupFailure("create", propertyVersion, reference, error);
-      const outcome: CreateOutcome = error.kind === "uncertain" ? "uncertain" : error.kind === "temporarily_unavailable" ? "temporarily_unavailable" : "provider_rejected";
+      const outcome: CreateOutcome = error.kind === "uncertain" || (error.kind === "invalid_provider_response" && error.status !== null && error.status >= 200 && error.status < 300)
+        ? "uncertain"
+        : error.kind === "temporarily_unavailable" ? "temporarily_unavailable" : "provider_rejected";
       const body = emptyNormalized("create", outcome, propertyVersion, reference);
       body.payload_hash = ready.payload_hash; body.provider_request_id = error.providerRequestId; body.warnings = ready.warnings; body.errors.push(providerIssue(error));
       return { status: outcome === "uncertain" ? 409 : outcome === "temporarily_unavailable" ? 503 : 422, body };

@@ -47,6 +47,31 @@ describe("Avantio accommodation contracts and mapping", () => {
     expect(result.errors).toContainEqual(expect.objectContaining({ code, canonical_path: expect.any(String), provider_path: expect.any(String) }));
   });
 
+  it.each([
+    ["max_adults_required", { capacity: { ...productionCanonicalProperty.capacity, max_adults: 0 } }],
+    ["bathroom_count_required", { capacity: { ...productionCanonicalProperty.capacity, bathroom_count: 0 } }],
+    ["title_required", { identification: { ...productionCanonicalProperty.identification, title: "   " } }],
+    ["street_required", { address: { ...productionCanonicalProperty.address, street: "\t" } }],
+    ["invalid_country_code", { address: { ...productionCanonicalProperty.address, country: "br" } }],
+    ["invalid_admin1", { address: { ...productionCanonicalProperty.address, state: "   " } }],
+  ])("rejects unsafe readiness input with %s", async (code, section) => {
+    const result = await readiness(CanonicalPropertyV1Schema.parse({ ...productionCanonicalProperty, ...section }));
+    expect(result.ready).toBe(false);
+    expect(result.payload).toBeNull();
+    expect(result.errors).toContainEqual(expect.objectContaining({ code, canonical_path: expect.any(String), provider_path: expect.any(String) }));
+  });
+
+  it("defers sofa-bed mapping without emitting an extra provider bedroom", async () => {
+    const property = CanonicalPropertyV1Schema.parse({
+      ...productionCanonicalProperty,
+      capacity: { ...productionCanonicalProperty.capacity, sofa_bed: { available: true, bed_type: "double", raw_label: "sofa bed" } },
+    });
+    const result = await readiness(property);
+    expect(result.ready).toBe(true);
+    expect(result.payload?.distribution.bedrooms).toEqual(knownGoodCreatePayload.distribution.bedrooms);
+    expect(result.warnings).toContainEqual(expect.objectContaining({ code: "sofa_bed_provider_mapping_deferred", canonical_path: "capacity.sofa_bed", provider_path: "distribution.bedrooms" }));
+  });
+
   it("reports unsupported property and bed mappings explicitly", () => {
     const unsupportedProperty = mapCanonicalToAvantioCreate({ ...productionCanonicalProperty, identification: { ...productionCanonicalProperty.identification, property_type: "castle" } } as any);
     expect(unsupportedProperty.errors).toContainEqual(expect.objectContaining({ code: "unsupported_provider_mapping", canonical_path: "identification.property_type" }));

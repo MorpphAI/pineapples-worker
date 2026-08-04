@@ -16,6 +16,10 @@ function migrationWarning(canonicalPath: string, providerPath: string): Readines
   return issue("migration_derived_mapping", "Mapeamento baseado em evidência de migração, não no payload conectado principal.", canonicalPath, providerPath, canonicalPath.split(".")[0]);
 }
 
+function isBlankText(value: unknown): boolean {
+  return typeof value === "string" && value.trim().length === 0;
+}
+
 export function mapCanonicalToAvantioCreate(property: CanonicalPropertyV1): CreateMappingResult {
   const errors: ReadinessIssue[] = [];
   const warnings: ReadinessIssue[] = [];
@@ -31,7 +35,19 @@ export function mapCanonicalToAvantioCreate(property: CanonicalPropertyV1): Crea
     [property.capacity.bathroom_count, "bathroom_count_required", "Informe a quantidade de banheiros.", "capacity.bathroom_count", "distribution.bathrooms"],
   ];
   for (const [value, code, message, canonicalPath, providerPath] of required) {
-    if (value === null || value === "") errors.push(issue(code, message, canonicalPath, providerPath, canonicalPath.split(".")[0]));
+    if (value === null || isBlankText(value)) errors.push(issue(code, message, canonicalPath, providerPath, canonicalPath.split(".")[0]));
+  }
+  if (property.capacity.max_adults !== null && property.capacity.max_adults <= 0) {
+    errors.push(issue("max_adults_required", "Informe uma capacidade máxima de adultos maior que zero.", "capacity.max_adults", "capacity.maxAdults", "capacity"));
+  }
+  if (property.capacity.bathroom_count !== null && property.capacity.bathroom_count <= 0) {
+    errors.push(issue("bathroom_count_required", "Informe ao menos um banheiro.", "capacity.bathroom_count", "distribution.bathrooms", "capacity"));
+  }
+  if (property.address.country !== null && !/^[A-Z]{2}$/.test(property.address.country)) {
+    errors.push(issue("invalid_country_code", "Informe um código de país válido com duas letras maiúsculas.", "address.country", "location.countryCode", "address"));
+  }
+  if (property.address.state !== null && (isBlankText(property.address.state) || !/^[\p{L}\p{N}][\p{L}\p{N} .'-]*$/u.test(property.address.state))) {
+    errors.push(issue("invalid_admin1", "Informe um estado ou divisão administrativa válida.", "address.state", "location.admin1", "address"));
   }
 
   const canonicalPropertyType = property.identification.property_type as keyof typeof propertyTypes | null;
@@ -56,12 +72,7 @@ export function mapCanonicalToAvantioCreate(property: CanonicalPropertyV1): Crea
     bedrooms.set(bed.position, group);
   }
   if (property.capacity.sofa_bed.available === true) {
-    const sofaType = property.capacity.sofa_bed.bed_type;
-    if (!sofaType || !bedTypes[sofaType]) errors.push(issue("unsupported_provider_mapping", "Sofá-cama disponível sem tipo suportado.", "capacity.sofa_bed.bed_type", "distribution.bedrooms[].beds[].type", "capacity"));
-    else {
-      if (sofaType !== "queen") warnings.push(migrationWarning("capacity.sofa_bed.bed_type", "distribution.bedrooms[].beds[].type"));
-      bedrooms.set(Number.MAX_SAFE_INTEGER, [{ type: bedTypes[sofaType], amount: 1 }]);
-    }
+    warnings.push(issue("sofa_bed_provider_mapping_deferred", "O sofá-cama foi preservado apenas no contrato canônico até que o mapeamento do provedor seja verificado.", "capacity.sofa_bed", "distribution.bedrooms", "capacity"));
   }
   if (bedrooms.size === 0) errors.push(issue("bedrooms_required", "Informe ao menos uma cama com tipo conhecido.", "capacity.beds", "distribution.bedrooms", "capacity"));
 

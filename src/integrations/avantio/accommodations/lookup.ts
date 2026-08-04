@@ -2,8 +2,17 @@ import { AvantioAccommodation } from "../../../types/avantioTypes";
 
 export type AccommodationCandidate = { external_id: string; external_reference: string | null; label: string | null; remote_status: string | null };
 
-export function accommodationToCandidate(value: AvantioAccommodation): AccommodationCandidate | null {
-  const externalId = String(value.id ?? "").trim();
+export function authoritativeAccommodationId(value: Record<string, unknown>): string | null {
+  for (const field of ["id", "accommodationId", "accommodation_id"] as const) {
+    const candidate = value[field];
+    if (typeof candidate === "string" && candidate.trim()) return candidate.trim();
+    if (typeof candidate === "number" && Number.isFinite(candidate)) return String(candidate);
+  }
+  return null;
+}
+
+export function accommodationToCandidate(value: AvantioAccommodation | Record<string, unknown>): AccommodationCandidate | null {
+  const externalId = authoritativeAccommodationId(value as Record<string, unknown>);
   if (!externalId) return null;
   return {
     external_id: externalId,

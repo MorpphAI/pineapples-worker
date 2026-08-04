@@ -36,11 +36,20 @@ describe("AvantioAccommodationService", () => {
     [new AvantioProviderError("provider_rejected", "provider_http_422", "rejected", "body_received", 422), "provider_rejected", 422],
     [new AvantioProviderError("temporarily_unavailable", "provider_http_500", "temporary", "body_received", 500), "temporarily_unavailable", 503],
     [new AvantioProviderError("uncertain", "provider_network_outcome_unknown", "unknown", "fetch_invoked"), "uncertain", 409],
-    [new AvantioProviderError("invalid_provider_response", "missing_external_id", "missing", "body_received", 200), "provider_rejected", 422],
+    [new AvantioProviderError("invalid_provider_response", "missing_external_id", "missing", "body_received", 200), "uncertain", 409],
   ] as const)("normalizes create provider errors as %s", async (error, outcome, status) => {
     const fake = gateway([]); fake.createAccommodation.mockRejectedValue(error);
     const result = await new AvantioAccommodationService(enabledEnv, fake as any).create(property, 1);
     expect(result).toMatchObject({ status, body: { outcome } }); expect(fake.createAccommodation).toHaveBeenCalledTimes(1);
+  });
+
+  it("returns public uncertain with the provider request ID after an unusable 2xx success", async () => {
+    const fake = gateway([]);
+    fake.createAccommodation.mockRejectedValue(new AvantioProviderError("uncertain", "missing_external_id", "missing", "body_received", 201, "request-uncertain"));
+    const result = await new AvantioAccommodationService(enabledEnv, fake as any).create(property, 1);
+    expect(result).toMatchObject({ status: 409, body: { operation: "create", outcome: "uncertain", provider_request_id: "request-uncertain" } });
+    expect(fake.createAccommodation).toHaveBeenCalledTimes(1);
+    expect(CreateResponseSchema.safeParse(result.body).success).toBe(true);
   });
 
   it.each([[[], "not_found", 200], [[candidate], "found_one", 200], [[candidate, { ...candidate, external_id: "two" }], "found_multiple", 409]] as const)("reconciles zero, one, and multiple matches", async (matches, outcome, status) => {
@@ -54,6 +63,15 @@ describe("AvantioAccommodationService", () => {
     fake.findAccommodationsByExternalReference.mockRejectedValue(new AvantioProviderError("provider_rejected", "provider_http_403", "rejected", "body_received", 403));
     const result = await new AvantioAccommodationService(disabledEnv, fake as any).reconcile(property, 1);
     expect(result).toMatchObject({ status: 422, body: { operation: "reconcile", outcome: "provider_rejected" } });
+    expect(fake.createAccommodation).not.toHaveBeenCalled();
+  });
+
+  it.each(["create", "reconcile"] as const)("fails %s closed when exact lookup is incomplete", async (operation) => {
+    const fake = gateway([]);
+    fake.findAccommodationsByExternalReference.mockRejectedValue(new AvantioProviderError("temporarily_unavailable", "missing_authoritative_accommodation_id", "incomplete", "body_received"));
+    const service = new AvantioAccommodationService(enabledEnv, fake as any);
+    const result = operation === "create" ? await service.create(property, 1) : await service.reconcile(property, 1);
+    expect(result).toMatchObject({ status: 503, body: { operation, outcome: "temporarily_unavailable" } });
     expect(fake.createAccommodation).not.toHaveBeenCalled();
   });
 });
