@@ -1,33 +1,35 @@
-# Avantio accommodation Phase 3
+# Avantio accommodation boundary
 
-Phase 3 exposes authenticated (`x-api-key`) JSON endpoints:
+The Worker exposes three globally `x-api-key`-protected endpoints:
 
 - `POST /v1/avantio/accommodations/readiness`
 - `POST /v1/avantio/accommodations/create`
 - `POST /v1/avantio/accommodations/reconcile`
 
-All use canonical schema version `1`, snake_case fields, UUID request/property IDs and a positive canonical property code. Sensitive field names (including credentials, banking data, owner data and prebuilt Avantio payloads) are rejected recursively. Nullable booleans are tri-state: `null` remains unknown.
+The PineOS-facing canonical schema version is `1`; the public Worker contract version is `worker-accommodation-v1`. Public examples live in `contracts/pineos-worker/v1` and contain no raw Avantio request or response payloads.
 
-## Provider-contract status
+## Authoritative Worker findings
 
-The current repository has only read-side Avantio endpoint evidence. It does not contain authenticated Avantio create documentation, a sanitized create response, or evidence identifying a reliable exact external-reference field in an accommodation response. Therefore the provider contract version is `unverified`; mappings and create payload construction are intentionally unavailable. No historical or guessed payload is used.
+The authoritative read model is `AvantioAccommodation` in `src/types/avantioTypes.ts`. It contains `id`, `galleryId`, `name`, `status`, `area`, and `location`. It does not contain a verified external property reference. The existing `AvantioApiGateway.getAccommodations()` method lists all pages and `getAccommodation()` reads details using `X-Avantio-Auth` and `AVANTIO_BASE_URL`.
 
-Readiness validates the canonical structure and reports `contract_unavailable` as a blocking error. Reconciliation and creation hard-fail with `external_reference_lookup_unavailable` rather than fuzzy-match or create duplicates. Once authenticated documentation or sanitized live GET evidence identifies the exact reference field and required create fields/enums, add the verified contract and mapping before enabling those operations.
+No accommodation create-request model, create method, provider error type, bounded timeout, provider request-ID extraction, or exact external-reference field exists in the current Worker. Those facts are not inferred from historical systems.
 
-## Feature flag and variables
+Consequently:
 
-Required Worker bindings are `API_KEY`, `AVANTIO_API_KEY`, `AVANTIO_BASE_URL`, and `DB`. `AVANTIO_ACCOMMODATION_CREATE_ENABLED` is a string flag and is enabled only when its normalized value is exactly `true`; its default in `wrangler.jsonc` is `false`.
+- readiness validates CanonicalPropertyV1, rejects sensitive keys, maps only fields found in the read model, and returns explicit provider-model/reference gaps;
+- reconciliation does not call Avantio and reports `external_reference_field_unavailable`;
+- create defaults to `create_disabled` and never calls Avantio;
+- no payload hash is returned until an authoritative create request can be built.
 
-Even with the flag set, this release never POSTs because the contract and lookup evidence are unavailable. Provider secrets, authorization headers, and complete provider payloads must never be logged.
+## Configuration
 
-## Hashing and uncertain outcomes
+Required bindings remain `API_KEY`, `AVANTIO_API_KEY`, `AVANTIO_BASE_URL`, and `DB`. `AVANTIO_ACCOMMODATION_CREATE_ENABLED` is enabled only when its normalized value equals `true`; repository default remains `false`.
 
-When a verified create payload exists, its SHA-256 hash must be generated from recursively key-sorted JSON with preserved array order and no IDs/timestamps. Create flow must validate, re-run readiness, hash, exact-reference lookup, then POST once. A timeout after transmission, connection loss, or success-shaped response lacking an external ID is `uncertain`; callers reconcile before any retry.
+Do not enable creation until the current Worker model authoritatively defines:
 
-## Safe smoke test
+1. the accommodation create request and required enums;
+2. the exact response field preserving `identification.code`;
+3. create response external-ID semantics;
+4. normalized provider errors, timeouts, request IDs, and transmission lifecycle.
 
-1. Set a test `API_KEY`; leave `AVANTIO_ACCOMMODATION_CREATE_ENABLED=false`.
-2. POST a non-sensitive canonical property to readiness and confirm no Avantio mutation occurs.
-3. POST to create and verify the configuration response; no provider POST should be observed.
-4. POST reconcile and verify lookup is unavailable until a verified exact-reference field is implemented.
-5. Only after contract verification, use a disposable property code in the provider sandbox and reconcile after any uncertain response.
+An uncertain write must never be retried blindly. No complete provider payload, API key, incoming API key, or authorization header may be logged.

@@ -1,58 +1,63 @@
 import { SELF } from "cloudflare:test";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { AvantioApiGateway } from "../../src/apiGateways/avantio/getAppointments";
+import { canonicalProperty } from "../fixtures/canonicalPropertyV1";
 
 const headers = { "content-type": "application/json", "x-api-key": "test-key" };
-const property = {
-  identification: { code: "PHASE3-NONEXISTENT", title: "Apartamento", property_type: "apartment", tier: "standard" },
-  address: { postal_code: "20000-000", street: "Rua A", number: "1", city: "Rio", state: "RJ", country: "BR" },
-  capacity: { max_adults: 2, max_children: null, area_sqm: 50, bedroom_count: 1, suite_count: 0, bathroom_count: 1, toilet_count: 0, rooms: 2, beds: null, sofa_bed: null },
-  kitchen: { available: true, cooktop_type: null, frost_free_fridge: null, appliances: null, utensils: null },
-  amenities: { bedroom: null, living_room: null, bathroom: null, general: null },
-  services: { air_conditioning: null, wifi: { available: null, speed: null }, pets: null, parking: null, reception: null, self_check_in: null, elevator: null, keyholder_available: null, lock_type: null, water_heating: null, waste_disposal: null, existing_reservations: null },
-  operational_notes: null,
-  source: "phase3-smoke",
-  warnings: [],
-  legacy_metadata: null,
-};
-const request = { request_id: "11111111-1111-4111-8111-111111111111", property_id: "22222222-2222-4222-8222-222222222222", property_version: 8, canonical_schema_version: 1, property };
+const request = { request_id: "11111111-1111-4111-8111-111111111111", property_id: "22222222-2222-4222-8222-222222222222", property_version: 1, canonical_schema_version: 1, property: canonicalProperty };
 
 function post(path: string, body: unknown, authenticated = true) {
   return SELF.fetch(`http://local.test${path}`, { method: "POST", headers: authenticated ? headers : { "content-type": "application/json" }, body: JSON.stringify(body) });
 }
 
-describe("Avantio accommodation Phase 3 read-only routes", () => {
-  it("runs readiness for a valid-shaped canonical property", async () => {
+describe("Avantio accommodation Phase 3 routes", () => {
+  it("returns deterministic not_ready diagnostics for a valid canonical request", async () => {
     const response = await post("/v1/avantio/accommodations/readiness", request);
     const body = await response.json<any>();
     expect(response.status).toBe(200);
-    expect(body).toMatchObject({ success: true, operation: "readiness", ready: false, contract_version: "unverified", payload_hash: null });
-    expect(body.blocking_errors).toContainEqual(expect.objectContaining({ code: "contract_unavailable" }));
+    expect(body).toMatchObject({ success: true, operation: "readiness", outcome: "not_ready", contract_version: "worker-accommodation-v1", property_version: 1, payload_hash: null, provider_request_id: null });
+    expect(body.errors).toContainEqual(expect.objectContaining({ code: "provider_create_model_unavailable" }));
   });
 
-  it("rejects a readiness request with missing canonical fields", async () => {
-    const response = await post("/v1/avantio/accommodations/readiness", { ...request, property: { identification: property.identification } });
+  it("returns canonical paths for structurally missing fields", async () => {
+    const response = await post("/v1/avantio/accommodations/readiness", { ...request, property: { identification: canonicalProperty.identification } });
     expect(response.status).toBe(422);
-    expect(await response.json<any>()).toMatchObject({ success: false, error: { code: "invalid_request" } });
+    expect(await response.json<any>()).toMatchObject({ errors: [expect.objectContaining({ code: "invalid_canonical_request", canonical_path: "property.address" })] });
   });
 
-  it("does not query the provider when exact-reference lookup is unverified", async () => {
+  it("rejects sensitive nested keys with only the offending path", async () => {
+    const response = await post("/v1/avantio/accommodations/readiness", { ...request, property: { ...canonicalProperty, legacy_metadata: { nested: [{ Access_Code: "never-returned" }] } } });
+    const body = await response.json<any>();
+    expect(response.status).toBe(422);
+    expect(body.errors[0]).toMatchObject({ code: "sensitive_key_rejected", canonical_path: "property.legacy_metadata.nested[0].Access_Code" });
+    expect(JSON.stringify(body)).not.toContain("never-returned");
+  });
+
+  it("returns create_disabled and performs no provider lookup or POST", async () => {
+    const listSpy = vi.spyOn(AvantioApiGateway.prototype, "getAccommodations");
+    const response = await post("/v1/avantio/accommodations/create", { ...request, job_id: "33333333-3333-4333-8333-333333333333" });
+    expect(response.status).toBe(503);
+    expect(await response.json<any>()).toMatchObject({ operation: "create", outcome: "create_disabled", external_reference: "PINE-1", contract_version: "worker-accommodation-v1" });
+    expect(listSpy).not.toHaveBeenCalled();
+  });
+
+  it("fails reconciliation explicitly because no authoritative reference field exists", async () => {
+    const listSpy = vi.spyOn(AvantioApiGateway.prototype, "getAccommodations");
     const response = await post("/v1/avantio/accommodations/reconcile", request);
     expect(response.status).toBe(503);
-    expect(await response.json<any>()).toMatchObject({ operation: "reconcile", error: { code: "external_reference_lookup_unavailable" } });
+    expect(await response.json<any>()).toMatchObject({ operation: "reconcile", outcome: "temporarily_unavailable", errors: [expect.objectContaining({ code: "external_reference_field_unavailable" })] });
+    expect(listSpy).not.toHaveBeenCalled();
   });
 
   it("rejects unauthenticated access", async () => {
-    const response = await post("/v1/avantio/accommodations/readiness", request, false);
-    expect(response.status).toBe(401);
+    expect((await post("/v1/avantio/accommodations/readiness", request, false)).status).toBe(401);
   });
 
-  it("publishes all Phase 3 paths without secret values or provider payload examples", async () => {
+  it("publishes all Phase 3 paths without secrets or raw payload examples", async () => {
     const response = await SELF.fetch("http://local.test/openapi.json", { headers: { "x-api-key": "test-key" } });
     expect(response.status).toBe(200);
     const document = await response.json<any>();
-    expect(document.paths).toHaveProperty("/v1/avantio/accommodations/readiness");
-    expect(document.paths).toHaveProperty("/v1/avantio/accommodations/create");
-    expect(document.paths).toHaveProperty("/v1/avantio/accommodations/reconcile");
+    for (const path of ["readiness", "create", "reconcile"]) expect(document.paths).toHaveProperty(`/v1/avantio/accommodations/${path}`);
     const serialized = JSON.stringify(document);
     expect(serialized).not.toContain("test-key");
     expect(serialized).not.toContain("X-Avantio-Auth");

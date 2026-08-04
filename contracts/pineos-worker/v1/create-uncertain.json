@@ -1,0 +1,4 @@
+{
+  "success": false, "operation": "create", "outcome": "uncertain", "external_id": null, "external_reference": "PINE-1", "remote_status": null, "property_version": 1, "payload_hash": null,
+  "contract_version": "worker-accommodation-v1", "provider_request_id": null, "errors": [{ "code": "remote_outcome_unknown", "message": "A solicitação pode ter sido processada pela Avantio.", "canonical_path": null, "provider_path": null, "section": "provider" }], "warnings": [], "candidates": []
+}

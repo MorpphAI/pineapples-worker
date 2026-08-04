@@ -1,0 +1,4 @@
+{
+  "success": true, "operation": "create", "outcome": "found_existing", "external_id": "avantio-id", "external_reference": "PINE-1", "remote_status": "ENABLED", "property_version": 1,
+  "payload_hash": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", "contract_version": "worker-accommodation-v1", "provider_request_id": null, "errors": [], "warnings": [], "candidates": []
+}

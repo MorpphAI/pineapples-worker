@@ -1,0 +1,4 @@
+{
+  "success": true, "operation": "readiness", "outcome": "ready", "contract_version": "worker-accommodation-v1", "canonical_schema_version": 1, "property_version": 1,
+  "payload_hash": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", "provider_request_id": null, "errors": [], "warnings": []
+}

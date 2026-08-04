@@ -1,0 +1,4 @@
+{
+  "success": false, "operation": "create", "outcome": "provider_rejected", "external_id": null, "external_reference": "PINE-1", "remote_status": null, "property_version": 1, "payload_hash": null,
+  "contract_version": "worker-accommodation-v1", "provider_request_id": null, "errors": [{ "code": "provider_rejected", "message": "A Avantio rejeitou a solicitação.", "canonical_path": null, "provider_path": null, "section": "provider" }], "warnings": [], "candidates": []
+}

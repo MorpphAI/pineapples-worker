@@ -1,33 +1,50 @@
 import { describe, expect, it } from "vitest";
-import { CanonicalPropertyV1Schema, containsProhibitedKey, payloadHash, readiness } from "../../src/integrations/avantio/accommodations";
+import {
+  CanonicalPropertyV1Schema,
+  findSensitiveKeyPaths,
+  mapCanonicalToAuthoritativeReadShape,
+  payloadHash,
+  readiness,
+} from "../../src/integrations/avantio/accommodations";
+import { canonicalProperty } from "../fixtures/canonicalPropertyV1";
 
-const property = {
-  identification: { code: "PINE-1", title: "Apartamento", property_type: "apartment", tier: "standard" },
-  address: { postal_code: "20000-000", street: "Rua A", number: "1", city: "Rio", state: "RJ", country: "BR" },
-  capacity: { max_adults: 2, max_children: null, area_sqm: 50, bedroom_count: 1, suite_count: 0, bathroom_count: 1, toilet_count: 0, rooms: 2, beds: null, sofa_bed: null },
-  kitchen: { available: true, cooktop_type: null, frost_free_fridge: null, appliances: null, utensils: null },
-  amenities: { bedroom: null, living_room: null, bathroom: null, general: null },
-  services: { air_conditioning: null, wifi: { available: null, speed: null }, pets: null, parking: null, reception: null, self_check_in: null, elevator: null, keyholder_available: null, lock_type: null, water_heating: null, waste_disposal: null, existing_reservations: null },
-  source: "pineos", warnings: [],
-};
-
-describe("Avantio accommodation Phase 3 safety boundary", () => {
-  it("preserves tri-state nulls and rejects unknown schema keys", () => {
-    const parsed = CanonicalPropertyV1Schema.parse(property);
+describe("Avantio accommodation PineOS boundary", () => {
+  it("accepts the exact canonical v1 schema and preserves unknown nulls", () => {
+    const parsed = CanonicalPropertyV1Schema.parse(canonicalProperty);
+    expect(parsed.capacity.max_children).toBeNull();
     expect(parsed.services.wifi.available).toBeNull();
-    expect(CanonicalPropertyV1Schema.safeParse({ ...property, password: "no" }).success).toBe(false);
   });
-  it("rejects sensitive keys recursively", () => {
-    expect(containsProhibitedKey({ property, nested: { token: "secret" } })).toBe(true);
-    expect(containsProhibitedKey(property)).toBe(false);
+
+  it("rejects unsupported canonical enums", () => {
+    expect(CanonicalPropertyV1Schema.safeParse({ ...canonicalProperty, identification: { ...canonicalProperty.identification, property_type: "castle" } }).success).toBe(false);
   });
-  it("hashes equivalent objects deterministically", async () => {
+
+  it("reports sensitive keys recursively and case-insensitively without values", () => {
+    expect(findSensitiveKeyPaths({ property: canonicalProperty, nested: [{ WiFi_Password: "do-not-log" }] })).toEqual(["nested[0].WiFi_Password"]);
+    expect(findSensitiveKeyPaths(canonicalProperty)).toEqual([]);
+  });
+
+  it("maps deterministically only into fields that exist in the authoritative read model", () => {
+    const parsed = CanonicalPropertyV1Schema.parse(canonicalProperty);
+    expect(mapCanonicalToAuthoritativeReadShape(parsed)).toEqual({
+      name: "Apartamento",
+      location: { countryCode: "BR", cityName: "Rio", postalCode: "20000-000", address: "Rua A", number: "1" },
+    });
+  });
+
+  it("hashes recursively canonicalized mappings deterministically while preserving arrays", async () => {
     expect(await payloadHash({ b: [2, 1], a: 1 })).toBe(await payloadHash({ a: 1, b: [2, 1] }));
+    expect(await payloadHash({ a: [1, 2] })).not.toBe(await payloadHash({ a: [2, 1] }));
   });
-  it("reports missing bathrooms and an unavailable provider contract without defaults", () => {
-    const parsed = CanonicalPropertyV1Schema.parse({ ...property, capacity: { ...property.capacity, bathroom_count: null } });
+
+  it("returns field-level issues and authoritative contract gaps without defaults", () => {
+    const parsed = CanonicalPropertyV1Schema.parse({ ...canonicalProperty, address: { ...canonicalProperty.address, city: null } });
     const result = readiness(parsed);
     expect(result.ready).toBe(false);
-    expect(result.blocking_errors.map((error) => error.code)).toEqual(expect.arrayContaining(["bathroom_count_required", "contract_unavailable"]));
+    expect(result.errors).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: "city_required", canonical_path: "address.city", provider_path: "location.cityName" }),
+      expect.objectContaining({ code: "provider_create_model_unavailable" }),
+      expect.objectContaining({ code: "external_reference_field_unavailable", canonical_path: "identification.code" }),
+    ]));
   });
 });

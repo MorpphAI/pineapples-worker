@@ -1,0 +1,4 @@
+{
+  "success": false, "operation": "create", "outcome": "create_disabled", "external_id": null, "external_reference": "PINE-1", "remote_status": null, "property_version": 1, "payload_hash": null,
+  "contract_version": "worker-accommodation-v1", "provider_request_id": null, "errors": [{ "code": "create_disabled", "message": "A criação de acomodações está desativada.", "canonical_path": null, "provider_path": null, "section": "configuration" }], "warnings": [], "candidates": []
+}

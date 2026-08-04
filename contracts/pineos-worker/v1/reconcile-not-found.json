@@ -1,0 +1,4 @@
+{
+  "success": true, "operation": "reconcile", "outcome": "not_found", "external_id": null, "external_reference": "PINE-1", "remote_status": null, "property_version": 1, "payload_hash": null,
+  "contract_version": "worker-accommodation-v1", "provider_request_id": null, "errors": [], "warnings": [], "candidates": []
+}

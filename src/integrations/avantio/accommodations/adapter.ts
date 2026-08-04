@@ -1,1 +1,1 @@
-export { mapCanonicalPropertyToAvantio as buildAvantioAccommodationPayload } from "./mappings";
+export { mapCanonicalToAuthoritativeReadShape } from "./mappings";
