@@ -22,7 +22,10 @@ afterEach(() => { vi.unstubAllGlobals(); });
 
 describe("AvantioApiGateway accommodation methods", () => {
   it.each([
-    ["absolute", "https://provider.test/pms/v2/accommodations?cursor=abs&page=2", "https://provider.test/pms/v2/accommodations?cursor=abs&page=2"],
+    ["absolute HTTPS", "https://provider.test/pms/v2/accommodations?cursor=abs&page=2", "https://provider.test/pms/v2/accommodations?cursor=abs&page=2"],
+    ["absolute HTTP", "http://legacy-pagination.test/pms/v2/accommodations?cursor=http%2Fvalue&page=2", "https://provider.test/pms/v2/accommodations?cursor=http%2Fvalue&page=2"],
+    ["foreign absolute HTTPS", "https://foreign-pagination.test/pms/v2/accommodations?cursor=foreign&page=2", "https://provider.test/pms/v2/accommodations?cursor=foreign&page=2"],
+    ["protocol-relative", "//foreign-pagination.test/pms/v2/accommodations?cursor=protocol-relative&page=2", "https://provider.test/pms/v2/accommodations?cursor=protocol-relative&page=2"],
     ["root-relative with API base", "/pms/v2/accommodations?cursor=root&page=2", "https://provider.test/pms/v2/accommodations?cursor=root&page=2"],
     ["root-relative resource", "/accommodations?cursor=opaque%2Fvalue&page=2", "https://provider.test/pms/v2/accommodations?cursor=opaque%2Fvalue&page=2"],
     ["query-only", "?cursor=query&page=2", "https://provider.test/pms/v2/accommodations?cursor=query&page=2"],
@@ -69,20 +72,25 @@ describe("AvantioApiGateway accommodation methods", () => {
     expect(JSON.stringify(errorSpy.mock.calls)).not.toContain("opaque");
   });
 
-  it("follows an absolute continuation without rewriting any provider cursor parameters", async () => {
+  it("uses only the trusted destination while preserving every provider query parameter", async () => {
     const cursorEnv = { ...env, AVANTIO_BASE_URL: "https://provider.test/pms/v2" };
-    const cursor = "https://provider.test/pms/v2/accommodations?token=a%2Fb&cursor=x%2By&page=2&pagination_size=7&token=second";
+    const cursor = "http://foreign-pagination.test:8080/pms/v2/accommodations?token=a%2Fb&cursor=x%2By&page=2&pagination_size=7&token=second";
+    const trustedDestination = "https://provider.test/pms/v2/accommodations?token=a%2Fb&cursor=x%2By&page=2&pagination_size=7&token=second";
     const fetchMock = vi.fn().mockResolvedValue(response({ data: [] }));
     vi.stubGlobal("fetch", fetchMock);
 
     await new AvantioApiGateway(cursorEnv).getAccommodationsPage(cursor, 10);
 
-    expect(fetchMock).toHaveBeenCalledWith(cursor, expect.objectContaining({ method: "GET" }));
+    expect(fetchMock).toHaveBeenCalledWith(trustedDestination, expect.objectContaining({ method: "GET" }));
+    expect(fetchMock.mock.calls[0][0]).not.toContain("foreign-pagination.test");
+    expect(fetchMock.mock.calls[0][0]).not.toContain(":8080");
   });
 
   it.each([
-    ["foreign origin", "https://evil.test/pms/v2/accommodations?page=2", "cursor_origin_invalid"],
-    ["non-HTTPS", "http://provider.test/pms/v2/accommodations?page=2", "cursor_protocol_invalid"],
+    ["FTP scheme", "ftp://provider.test/pms/v2/accommodations?page=2", "cursor_protocol_invalid"],
+    ["file scheme", "file:///pms/v2/accommodations?page=2", "cursor_protocol_invalid"],
+    ["JavaScript scheme", "javascript:alert(1)?page=2", "cursor_protocol_invalid"],
+    ["data scheme", "data:text/plain,/accommodations?page=2", "cursor_protocol_invalid"],
     ["credentials", "https://user:password@provider.test/pms/v2/accommodations?page=2", "cursor_credentials_invalid"],
     ["bookings path", "https://provider.test/pms/v2/bookings?page=2", "cursor_path_invalid"],
     ["accommodation detail path", "https://provider.test/pms/v2/accommodations/id?page=2", "cursor_path_invalid"],
@@ -105,7 +113,7 @@ describe("AvantioApiGateway accommodation methods", () => {
 
   it("rejects an unsafe provider-returned next link without exposing it in diagnostics", async () => {
     const cursorEnv = { ...env, AVANTIO_BASE_URL: "https://provider.test/pms/v2" };
-    const rejected = "https://evil.test/pms/v2/accommodations?secret-cursor=value";
+    const rejected = "ftp://evil.test/pms/v2/accommodations?secret-cursor=value";
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(response({ data: [], _links: { next: rejected } })));
 

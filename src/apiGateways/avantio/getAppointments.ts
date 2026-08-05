@@ -49,33 +49,48 @@ function extractAccommodationCursor(value: unknown, status: number | null = null
 
 function resolveAccommodationCursor(
     cursor: string,
-    resolutionBase: URL,
+    trustedListUrl: URL,
     configuredBase: URL,
     status: number | null = null,
     providerRequestId: string | null = null,
-): URL {
+): string {
     const configuredBasePath = configuredBase.pathname.replace(/\/+$/, "");
+    const explicitScheme = /^([A-Za-z][A-Za-z0-9+.-]*):/.exec(cursor)?.[1]?.toLowerCase() ?? null;
+    if (explicitScheme && explicitScheme !== "http" && explicitScheme !== "https") {
+        throw cursorError("cursor_protocol_invalid", status, providerRequestId);
+    }
+
     let candidate: URL;
     try {
         if (/^\/accommodations\/?(?:[?#]|$)/.test(cursor)) {
             logAccommodationIndexDiagnostic("cursor_base_path_omitted_normalized", "cursor_normalized", status, providerRequestId, "info");
             candidate = new URL(`${configuredBasePath}${cursor}`, configuredBase.origin);
         } else {
-            candidate = new URL(cursor, resolutionBase);
+            candidate = new URL(cursor, trustedListUrl);
         }
     } catch {
         throw cursorError("cursor_parse_failed", status, providerRequestId);
     }
 
-    if (candidate.protocol !== "https:") throw cursorError("cursor_protocol_invalid", status, providerRequestId);
     if (candidate.username || candidate.password) throw cursorError("cursor_credentials_invalid", status, providerRequestId);
-    if (candidate.origin !== configuredBase.origin) throw cursorError("cursor_origin_invalid", status, providerRequestId);
 
     const accommodationPath = `${configuredBasePath}/accommodations` || "/accommodations";
-    if (candidate.pathname !== accommodationPath && candidate.pathname !== `${accommodationPath}/`) {
+    const rootAccommodationPath = "/accommodations";
+    const allowedPath = candidate.pathname === accommodationPath
+        || candidate.pathname === `${accommodationPath}/`
+        || candidate.pathname === rootAccommodationPath
+        || candidate.pathname === `${rootAccommodationPath}/`;
+    if (!allowedPath) {
         throw cursorError("cursor_path_invalid", status, providerRequestId);
     }
-    return candidate;
+
+    const queryStart = cursor.indexOf("?");
+    const fragmentStart = cursor.indexOf("#");
+    const hasQuery = queryStart >= 0 && (fragmentStart < 0 || queryStart < fragmentStart);
+    const continuationQuery = !hasQuery
+        ? ""
+        : cursor.slice(queryStart, fragmentStart >= 0 ? fragmentStart : undefined);
+    return `${trustedListUrl.origin}${trustedListUrl.pathname}${continuationQuery}`;
 }
 
 export class AvantioApiGateway {
@@ -185,17 +200,18 @@ export class AvantioApiGateway {
 
         const configuredBase = new URL(this.baseUrl);
 
-        let url: URL;
+        let requestUrl: string;
         if (nextPageUrl) {
-            url = resolveAccommodationCursor(nextPageUrl, listUrl, configuredBase);
+            requestUrl = resolveAccommodationCursor(nextPageUrl, listUrl, configuredBase);
         } else {
-            url = listUrl;
-            url.searchParams.set("pagination_size", String(boundedPageSize));
+            const initialUrl = new URL(listUrl.toString());
+            initialUrl.searchParams.set("pagination_size", String(boundedPageSize));
+            requestUrl = initialUrl.toString();
         }
 
         let response: Response;
         try {
-            response = await fetch(url.toString(), {
+            response = await fetch(requestUrl, {
                 method: "GET",
                 headers: { "X-Avantio-Auth": this.apiKey, "accept": "application/json" },
             });
@@ -242,7 +258,7 @@ export class AvantioApiGateway {
         const nextCursor = extractAccommodationCursor(next, response.status, providerRequestId);
         let resolvedNextPageUrl: string | null = null;
         if (nextCursor) {
-            resolvedNextPageUrl = resolveAccommodationCursor(nextCursor, url, configuredBase, response.status, providerRequestId).toString();
+            resolvedNextPageUrl = resolveAccommodationCursor(nextCursor, listUrl, configuredBase, response.status, providerRequestId);
         }
         return { records, nextPageUrl: resolvedNextPageUrl };
     }

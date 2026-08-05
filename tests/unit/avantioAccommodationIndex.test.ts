@@ -135,14 +135,14 @@ describe("bounded incremental Avantio accommodation index", () => {
     expect((await testEnv.DB.prepare("SELECT COUNT(*) AS count FROM avantio_accommodation_reference_index WHERE generation_id = 'old-active'").first<{ count: number }>())?.count).toBe(0);
   });
 
-  it("continues the exact production root-relative resource cursor beyond the first ten records", async () => {
+  it("persists page one and rebases the production HTTP cursor before advancing page two", async () => {
     const productionEnv = { ...env, AVANTIO_BASE_URL: "https://provider.test/pms/v2" };
     const firstRecords = Array.from({ length: 10 }, (_, index) => rawRecord(`production-${index}`, `REF-${index}`));
     const expectedCursor = "https://provider.test/pms/v2/accommodations?page=2&cursor=opaque%2Fvalue&token=a%2Bb";
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(providerResponse({
         data: firstRecords,
-        _links: { next: "/accommodations?page=2&cursor=opaque%2Fvalue&token=a%2Bb" },
+        _links: { next: "http://legacy-pagination.test/pms/v2/accommodations?page=2&cursor=opaque%2Fvalue&token=a%2Bb" },
       }))
       .mockResolvedValueOnce(providerResponse({ data: [rawRecord("production-10", "REF-10")] }));
     vi.stubGlobal("fetch", fetchMock);
