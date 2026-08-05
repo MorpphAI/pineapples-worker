@@ -5,6 +5,7 @@ import {
   AVANTIO_ACCOMMODATION_CONTRACT_VERSION,
   AvantioAccommodationService,
   CommonRequestSchema,
+  CreateRequest,
   CreateRequestSchema,
   CreateResponseSchema,
   findSensitiveKeyPaths,
@@ -69,7 +70,12 @@ export class AvantioAccommodationCreate extends OpenAPIRoute {
   };
   async handle(c: Phase3Context) {
     const input = await parseRequest(c, "create"); if ("error" in input) return input.error;
-    const result = await new AvantioAccommodationService(c.env).create(input.value.property, input.value.property_version);
+    const value = input.value as CreateRequest;
+    const result = await new AvantioAccommodationService(c.env).create(value.property, value.property_version, {
+      requestId: value.request_id,
+      jobId: value.job_id,
+      propertyId: value.property_id,
+    });
     return c.json(result.body, result.status);
   }
 }

@@ -8,4 +8,5 @@ export * from "./publicContract";
 export * from "./createContract";
 export * from "./createMapper";
 export * from "./providerErrors";
+export * from "./providerErrorParser";
 export * from "./service";

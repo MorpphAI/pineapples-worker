@@ -1,6 +1,7 @@
 import { SELF } from "cloudflare:test";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { AvantioApiGateway } from "../../src/apiGateways/avantio/getAppointments";
+import { AvantioAccommodationService, emptyNormalized } from "../../src/integrations/avantio/accommodations";
 import { productionCanonicalProperty } from "../fixtures/avantioAccommodationCreate";
 
 const headers = { "content-type": "application/json", "x-api-key": "test-key" };
@@ -43,6 +44,22 @@ describe("Avantio accommodation Phase 3 routes", () => {
     const create = vi.spyOn(AvantioApiGateway.prototype, "createAccommodation");
     const response = await post("/v1/avantio/accommodations/create", { ...request, job_id: "33333333-3333-4333-8333-333333333333" });
     expect(response.status).toBe(503); expect(await response.json<any>()).toMatchObject({ outcome: "create_disabled" }); expect(create).not.toHaveBeenCalled();
+  });
+
+  it("passes request, job, and property IDs only as create diagnostic context", async () => {
+    const body = emptyNormalized("create", "provider_rejected", 1, "NSC314");
+    body.errors.push({ code: "provider_http_400", message: "A Avantio rejeitou ou não conseguiu processar a solicitação.", canonical_path: null, provider_path: null, section: "provider" });
+    const create = vi.spyOn(AvantioAccommodationService.prototype, "create").mockResolvedValue({ status: 422, body });
+
+    const response = await post("/v1/avantio/accommodations/create", { ...request, job_id: "33333333-3333-4333-8333-333333333333" });
+
+    expect(response.status).toBe(422);
+    expect(create).toHaveBeenCalledWith(productionCanonicalProperty, 1, {
+      requestId: request.request_id,
+      jobId: "33333333-3333-4333-8333-333333333333",
+      propertyId: request.property_id,
+    });
+    expect(JSON.stringify(await response.json())).not.toContain(request.request_id);
   });
 
   it.each([[[], "not_found", 200], [[{ external_id: "one", external_reference: "NSC314", label: null, remote_status: null }], "found_one", 200], [[{ external_id: "one", external_reference: "NSC314", label: null, remote_status: null }, { external_id: "two", external_reference: "NSC314", label: null, remote_status: null }], "found_multiple", 409]] as const)("reconciles exact matches", async (candidates, outcome, status) => {

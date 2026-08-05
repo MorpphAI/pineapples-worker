@@ -58,6 +58,44 @@ describe("AvantioAccommodationService", () => {
     expect(result).toMatchObject({ status, body: { outcome } }); expect(fake.createAccommodation).toHaveBeenCalledTimes(1);
   });
 
+  it("returns the generic HTTP 400 issue followed by sanitized provider details", async () => {
+    const fake = gateway([]);
+    fake.createAccommodation.mockRejectedValue(new AvantioProviderError(
+      "provider_rejected",
+      "provider_http_400",
+      "A Avantio rejeitou ou não conseguiu processar a solicitação.",
+      "body_received",
+      400,
+      null,
+      [{ code: "provider_invalid_field", message: "Invalid address", canonical_path: null, provider_path: "location.address", section: "provider" }],
+    ));
+
+    const result = await new AvantioAccommodationService(enabledEnv, fake as any).create(property, 7, {
+      requestId: "11111111-1111-4111-8111-111111111111",
+      jobId: "33333333-3333-4333-8333-333333333333",
+      propertyId: "22222222-2222-4222-8222-222222222222",
+    });
+
+    expect(result).toMatchObject({
+      status: 422,
+      body: {
+        outcome: "provider_rejected",
+        property_version: 7,
+        provider_request_id: null,
+        errors: [
+          { code: "provider_http_400", provider_path: null },
+          { code: "provider_invalid_field", message: "Invalid address", provider_path: "location.address", canonical_path: null },
+        ],
+      },
+    });
+    expect(CreateResponseSchema.safeParse(result.body).success).toBe(true);
+    expect(fake.createAccommodation).toHaveBeenCalledWith(expect.anything(), {
+      requestId: "11111111-1111-4111-8111-111111111111",
+      jobId: "33333333-3333-4333-8333-333333333333",
+      propertyId: "22222222-2222-4222-8222-222222222222",
+    });
+  });
+
   it("returns public uncertain with the provider request ID after an unusable 2xx success", async () => {
     const fake = gateway([]);
     fake.createAccommodation.mockRejectedValue(new AvantioProviderError("uncertain", "missing_external_id", "missing", "body_received", 201, "request-uncertain"));

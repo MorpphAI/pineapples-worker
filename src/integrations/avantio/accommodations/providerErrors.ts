@@ -1,5 +1,14 @@
+import { AvantioProviderIssue } from "./providerErrorParser";
+
 export type AvantioTransportStage = "not_started" | "request_built" | "fetch_invoked" | "response_received" | "body_received";
 export type AvantioProviderErrorKind = "provider_rejected" | "temporarily_unavailable" | "uncertain" | "invalid_provider_response";
+
+export type AvantioProviderResponseMetadata = {
+  contentType: string | null;
+  bodyByteCount: number;
+  bodySha256: string;
+  extractedIssueCount: number;
+};
 
 export class AvantioProviderError extends Error {
   constructor(
@@ -9,6 +18,8 @@ export class AvantioProviderError extends Error {
     public readonly stage: AvantioTransportStage,
     public readonly status: number | null = null,
     public readonly providerRequestId: string | null = null,
+    public readonly issues: AvantioProviderIssue[] = [],
+    public readonly responseMetadata: AvantioProviderResponseMetadata | null = null,
   ) {
     super(message);
     this.name = "AvantioProviderError";

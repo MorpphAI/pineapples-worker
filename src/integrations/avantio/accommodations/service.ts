@@ -1,4 +1,4 @@
-import { AvantioApiGateway, AvantioCreateResult } from "../../../apiGateways/avantio/getAppointments";
+import { AvantioApiGateway, AvantioCreateDiagnosticContext, AvantioCreateResult } from "../../../apiGateways/avantio/getAppointments";
 import { Env } from "../../../types/configTypes";
 import { CanonicalPropertyV1 } from "./canonicalPropertyV1";
 import { AccommodationCandidate } from "./lookup";
@@ -18,7 +18,8 @@ function lookupFailure(operation: "create" | "reconcile", propertyVersion: numbe
   const outcome: CreateOutcome | ReconcileOutcome = kind === "provider_rejected" ? "provider_rejected" : "temporarily_unavailable";
   const body = emptyNormalized(operation, outcome, propertyVersion, reference);
   body.provider_request_id = error instanceof AvantioProviderError ? error.providerRequestId : null;
-  body.errors.push(error instanceof AvantioProviderError ? providerIssue(error) : { code: "provider_temporarily_unavailable", message: "A consulta à Avantio falhou temporariamente.", canonical_path: null, provider_path: null, section: "provider" });
+  if (error instanceof AvantioProviderError) body.errors.push(providerIssue(error), ...error.issues);
+  else body.errors.push({ code: "provider_temporarily_unavailable", message: "A consulta à Avantio falhou temporariamente.", canonical_path: null, provider_path: null, section: "provider" });
   return { status: outcome === "provider_rejected" ? 422 : 503, body };
 }
 
@@ -26,7 +27,7 @@ export class AvantioAccommodationService {
   private readonly gateway: Gateway;
   constructor(private readonly env: Env, gateway?: Gateway) { this.gateway = gateway ?? new AvantioApiGateway(env); }
 
-  async create(property: CanonicalPropertyV1, propertyVersion: number): Promise<ServiceResponse> {
+  async create(property: CanonicalPropertyV1, propertyVersion: number, diagnosticContext?: AvantioCreateDiagnosticContext): Promise<ServiceResponse> {
     const reference = property.identification.code;
     const ready = await readiness(property);
     if (!ready.ready || !ready.payload) {
@@ -59,7 +60,7 @@ export class AvantioAccommodationService {
     }
 
     try {
-      const created: AvantioCreateResult = await this.gateway.createAccommodation(ready.payload);
+      const created: AvantioCreateResult = await this.gateway.createAccommodation(ready.payload, diagnosticContext);
       if (this.gateway.upsertCreatedAccommodationInActiveIndex) {
         try {
           await this.gateway.upsertCreatedAccommodationInActiveIndex(created.externalId, reference, created.remoteStatus);
@@ -76,7 +77,7 @@ export class AvantioAccommodationService {
         ? "uncertain"
         : error.kind === "temporarily_unavailable" ? "temporarily_unavailable" : "provider_rejected";
       const body = emptyNormalized("create", outcome, propertyVersion, reference);
-      body.payload_hash = ready.payload_hash; body.provider_request_id = error.providerRequestId; body.warnings = ready.warnings; body.errors.push(providerIssue(error));
+      body.payload_hash = ready.payload_hash; body.provider_request_id = error.providerRequestId; body.warnings = ready.warnings; body.errors.push(providerIssue(error), ...error.issues);
       return { status: outcome === "uncertain" ? 409 : outcome === "temporarily_unavailable" ? 503 : 422, body };
     }
   }

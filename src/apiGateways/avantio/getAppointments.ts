@@ -4,6 +4,11 @@ import { AvantioAccommodationCreateRequest, AvantioAccommodationCreateRequestSch
 import { authoritativeAccommodationId, AccommodationCandidate, accommodationToCandidate } from "../../integrations/avantio/accommodations/lookup";
 import { AvantioProviderError, classifyReceivedStatus } from "../../integrations/avantio/accommodations/providerErrors";
 import {
+    AVANTIO_PROVIDER_ERROR_MAX_BODY_BYTES,
+    AvantioProviderIssue,
+    parseAvantioProviderError,
+} from "../../integrations/avantio/accommodations/providerErrorParser";
+import {
     AccommodationIndexError,
     AccommodationReferenceIndexRepository,
     DEFAULT_ACCOMMODATION_INDEX_MAX_AGE_SECONDS,
@@ -11,6 +16,84 @@ import {
 
 export type AvantioCreateResult = { externalId: string; remoteStatus: string | null; providerRequestId: string | null };
 export type AvantioAccommodationPage = { records: Array<Record<string, unknown>>; nextPageUrl: string | null };
+export type AvantioCreateDiagnosticContext = { requestId: string; jobId: string; propertyId: string };
+
+type BoundedProviderBody = { text: string; bytes: Uint8Array };
+
+function safeDiagnosticId(value: string | null | undefined): string | null {
+    const trimmed = value?.trim() ?? "";
+    return /^[A-Za-z0-9._:-]{1,128}$/.test(trimmed) ? trimmed : null;
+}
+
+function safeContentType(value: string | null): string | null {
+    const trimmed = value?.trim() ?? "";
+    return /^[A-Za-z0-9!#$&^_.+\-*/;= ]{1,100}$/.test(trimmed) ? trimmed : null;
+}
+
+async function readBoundedProviderBody(response: Response): Promise<BoundedProviderBody> {
+    if (!response.body) {
+        const text = await response.text();
+        const allBytes = new TextEncoder().encode(text);
+        const bytes = allBytes.slice(0, AVANTIO_PROVIDER_ERROR_MAX_BODY_BYTES);
+        return { text: new TextDecoder().decode(bytes), bytes };
+    }
+
+    const reader = response.body.getReader();
+    const chunks: Uint8Array[] = [];
+    let count = 0;
+    try {
+        while (count < AVANTIO_PROVIDER_ERROR_MAX_BODY_BYTES) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            const remaining = AVANTIO_PROVIDER_ERROR_MAX_BODY_BYTES - count;
+            const chunk = value.byteLength > remaining ? value.slice(0, remaining) : value;
+            chunks.push(chunk);
+            count += chunk.byteLength;
+            if (value.byteLength > remaining) break;
+        }
+        if (count >= AVANTIO_PROVIDER_ERROR_MAX_BODY_BYTES) await reader.cancel();
+    } finally {
+        reader.releaseLock();
+    }
+    const bytes = new Uint8Array(count);
+    let offset = 0;
+    for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
+    return { text: new TextDecoder().decode(bytes), bytes };
+}
+
+async function sha256Hex(bytes: Uint8Array): Promise<string> {
+    const digest = await crypto.subtle.digest("SHA-256", bytes);
+    return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+function logCreateProviderRejected(
+    context: AvantioCreateDiagnosticContext | undefined,
+    status: number,
+    outcome: "provider_rejected" | "temporarily_unavailable",
+    providerRequestId: string | null,
+    issues: AvantioProviderIssue[],
+    contentType: string | null,
+    bodyByteCount: number,
+    bodySha256: string,
+): void {
+    const diagnostic: Record<string, unknown> = {
+        event: "avantio_create_provider_rejected",
+        request_id: safeDiagnosticId(context?.requestId),
+        job_id: safeDiagnosticId(context?.jobId),
+        property_id: safeDiagnosticId(context?.propertyId),
+        provider_http_status: status,
+        outcome,
+        extracted_issue_count: issues.length,
+        issue_codes: issues.map((issue) => issue.code),
+        provider_paths: issues.flatMap((issue) => issue.provider_path ? [issue.provider_path] : []),
+        response_content_type: contentType,
+        response_body_byte_count: bodyByteCount,
+        response_body_sha256: bodySha256,
+    };
+    const safeProviderRequestId = safeDiagnosticId(providerRequestId);
+    if (safeProviderRequestId) diagnostic.provider_request_id = safeProviderRequestId;
+    console.error(JSON.stringify(diagnostic));
+}
 
 function sanitizedDiagnosticValue(value: string | null): string | null {
     if (!value) return null;
@@ -369,7 +452,7 @@ export class AvantioApiGateway {
         });
     }
 
-    async createAccommodation(payload: AvantioAccommodationCreateRequest, timeoutMs = 15000): Promise<AvantioCreateResult> {
+    async createAccommodation(payload: AvantioAccommodationCreateRequest, diagnosticContext?: AvantioCreateDiagnosticContext, timeoutMs = 15000): Promise<AvantioCreateResult> {
         const validated = AvantioAccommodationCreateRequestSchema.safeParse(payload);
         if (!validated.success) throw new AvantioProviderError("provider_rejected", "invalid_provider_payload", "Payload de criação inválido.", "not_started");
 
@@ -391,16 +474,48 @@ export class AvantioApiGateway {
         }
 
         const providerRequestId = response.headers.get("x-avantio-request-id") ?? response.headers.get("x-request-id") ?? response.headers.get("request-id");
+        if (!response.ok) {
+            const kind = classifyReceivedStatus(response.status);
+            const outcome = kind === "temporarily_unavailable" ? "temporarily_unavailable" : "provider_rejected";
+            const contentType = safeContentType(response.headers.get("content-type"));
+            let boundedBody: BoundedProviderBody;
+            try {
+                boundedBody = await readBoundedProviderBody(response);
+            } catch {
+                const bodySha256 = await sha256Hex(new Uint8Array());
+                logCreateProviderRejected(diagnosticContext, response.status, outcome, providerRequestId, [], contentType, 0, bodySha256);
+                throw new AvantioProviderError(
+                    kind,
+                    "provider_body_unreadable",
+                    "A resposta da Avantio não pôde ser lida.",
+                    "response_received",
+                    response.status,
+                    providerRequestId,
+                    [],
+                    { contentType, bodyByteCount: 0, bodySha256, extractedIssueCount: 0 },
+                );
+            }
+            const issues = parseAvantioProviderError(boundedBody.text);
+            const bodySha256 = await sha256Hex(boundedBody.bytes);
+            const metadata = { contentType, bodyByteCount: boundedBody.bytes.byteLength, bodySha256, extractedIssueCount: issues.length };
+            logCreateProviderRejected(diagnosticContext, response.status, outcome, providerRequestId, issues, contentType, metadata.bodyByteCount, bodySha256);
+            throw new AvantioProviderError(
+                kind,
+                `provider_http_${response.status}`,
+                "A Avantio rejeitou ou não conseguiu processar a solicitação.",
+                "body_received",
+                response.status,
+                providerRequestId,
+                issues,
+                metadata,
+            );
+        }
+
         let text: string;
         try {
             text = await response.text();
         } catch {
-            const kind = response.ok ? "uncertain" : classifyReceivedStatus(response.status);
-            throw new AvantioProviderError(kind, "provider_body_unreadable", response.ok ? "O resultado remoto da criação não pôde ser confirmado." : "A resposta da Avantio não pôde ser lida.", "response_received", response.status, providerRequestId);
-        }
-
-        if (!response.ok) {
-            throw new AvantioProviderError(classifyReceivedStatus(response.status), `provider_http_${response.status}`, "A Avantio rejeitou ou não conseguiu processar a solicitação.", "body_received", response.status, providerRequestId);
+            throw new AvantioProviderError("uncertain", "provider_body_unreadable", "O resultado remoto da criação não pôde ser confirmado.", "response_received", response.status, providerRequestId);
         }
 
         let json: unknown = null;

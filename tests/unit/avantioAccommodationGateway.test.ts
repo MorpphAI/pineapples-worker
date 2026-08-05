@@ -227,7 +227,28 @@ describe("AvantioApiGateway accommodation methods", () => {
 
   it.each([[400, providerValidationError], [401, {}], [403, {}], [422, providerValidationError]] as const)("classifies HTTP %s as provider_rejected", async (status, body) => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(response(body, status)));
-    await expect(new AvantioApiGateway(env).createAccommodation(knownGoodCreatePayload)).rejects.toMatchObject({ kind: "provider_rejected", status });
+    await expect(new AvantioApiGateway(env).createAccommodation(knownGoodCreatePayload)).rejects.toMatchObject({
+      kind: "provider_rejected",
+      code: `provider_http_${status}`,
+      status,
+      providerRequestId: null,
+    });
+  });
+
+  it("carries sanitized field issues and bounded response metadata for HTTP 400", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(response({ errors: [{ field: "location.address", message: "Invalid address", code: "INVALID_FIELD" }] }, 400)));
+    const error = await new AvantioApiGateway(env).createAccommodation(knownGoodCreatePayload).catch((caught) => caught as AvantioProviderError);
+
+    expect(error).toMatchObject({
+      kind: "provider_rejected",
+      code: "provider_http_400",
+      status: 400,
+      providerRequestId: null,
+      issues: [{ code: "provider_invalid_field", message: "Invalid address", canonical_path: null, provider_path: "location.address", section: "provider" }],
+      responseMetadata: { contentType: "application/json", extractedIssueCount: 1 },
+    });
+    expect(error.responseMetadata?.bodyByteCount).toBeGreaterThan(0);
+    expect(error.responseMetadata?.bodySha256).toMatch(/^[a-f0-9]{64}$/);
   });
 
   it.each([[429, providerTemporaryError], [500, providerTemporaryError], [503, providerTemporaryError]] as const)("classifies received HTTP %s as temporarily_unavailable", async (status, body) => {
@@ -259,9 +280,23 @@ describe("AvantioApiGateway accommodation methods", () => {
   it("does not log API keys or full create payloads", async () => {
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(response(providerValidationError, 400)));
-    await expect(new AvantioApiGateway(env).createAccommodation(knownGoodCreatePayload)).rejects.toBeInstanceOf(AvantioProviderError);
+    const rawOnlyValue = "raw-provider-value-never-logged";
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(response({ errors: [{ field: "location.address", message: "Invalid address" }], raw: rawOnlyValue }, 400)));
+    await expect(new AvantioApiGateway(env).createAccommodation(knownGoodCreatePayload, {
+      requestId: "11111111-1111-4111-8111-111111111111",
+      jobId: "33333333-3333-4333-8333-333333333333",
+      propertyId: "22222222-2222-4222-8222-222222222222",
+    })).rejects.toBeInstanceOf(AvantioProviderError);
     const logged = JSON.stringify([...errorSpy.mock.calls, ...logSpy.mock.calls]);
+    expect(errorSpy).toHaveBeenCalledTimes(1);
+    expect(logged).toContain("avantio_create_provider_rejected");
+    expect(logged).toContain("11111111-1111-4111-8111-111111111111");
+    expect(logged).toContain("33333333-3333-4333-8333-333333333333");
+    expect(logged).toContain("22222222-2222-4222-8222-222222222222");
+    expect(logged).toContain("provider_validation_error");
+    expect(logged).toContain("location.address");
+    expect(logged).not.toContain(rawOnlyValue);
+    expect(logged).not.toContain("Invalid address");
     expect(logged).not.toContain("provider-secret"); expect(logged).not.toContain("incoming-secret"); expect(logged).not.toContain("Avenida Exemplo");
   });
 });
