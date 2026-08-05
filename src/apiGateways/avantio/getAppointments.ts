@@ -18,12 +18,64 @@ function sanitizedDiagnosticValue(value: string | null): string | null {
     return sanitized || null;
 }
 
-function logAccommodationIndexDiagnostic(stage: string, code: string, status: number | null = null, providerRequestId: string | null = null): void {
+function logAccommodationIndexDiagnostic(stage: string, code: string, status: number | null = null, providerRequestId: string | null = null, level: "error" | "info" = "error"): void {
     const fields = [`stage=${stage}`, `code=${code}`];
     if (status !== null) fields.push(`status=${status}`);
     const safeRequestId = sanitizedDiagnosticValue(providerRequestId);
     if (safeRequestId) fields.push(`provider_request_id=${safeRequestId}`);
-    console.error(`[AvantioAccommodationIndex] ${fields.join(" ")}`);
+    console[level](`[AvantioAccommodationIndex] ${fields.join(" ")}`);
+}
+
+function cursorError(reason: string, status: number | null = null, providerRequestId: string | null = null): AvantioProviderError {
+    logAccommodationIndexDiagnostic(reason, "accommodation_index_cursor_invalid", status, providerRequestId);
+    return new AvantioProviderError("temporarily_unavailable", "accommodation_index_cursor_invalid", "Invalid accommodation continuation cursor.", status === null ? "request_built" : "body_received", status, providerRequestId);
+}
+
+function extractAccommodationCursor(value: unknown, status: number | null = null, providerRequestId: string | null = null): string | null {
+    if (value === undefined || value === null || value === "") return null;
+    if (typeof value === "string") return value.trim() ? value : null;
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+        throw cursorError("cursor_non_string", status, providerRequestId);
+    }
+
+    const link = value as Record<string, unknown>;
+    const candidates = [link.href, link.url, link.uri]
+        .filter((candidate): candidate is string => typeof candidate === "string" && candidate.trim().length > 0);
+    if (candidates.length !== 1) {
+        throw cursorError("cursor_non_string", status, providerRequestId);
+    }
+    return candidates[0];
+}
+
+function resolveAccommodationCursor(
+    cursor: string,
+    resolutionBase: URL,
+    configuredBase: URL,
+    status: number | null = null,
+    providerRequestId: string | null = null,
+): URL {
+    const configuredBasePath = configuredBase.pathname.replace(/\/+$/, "");
+    let candidate: URL;
+    try {
+        if (/^\/accommodations\/?(?:[?#]|$)/.test(cursor)) {
+            logAccommodationIndexDiagnostic("cursor_base_path_omitted_normalized", "cursor_normalized", status, providerRequestId, "info");
+            candidate = new URL(`${configuredBasePath}${cursor}`, configuredBase.origin);
+        } else {
+            candidate = new URL(cursor, resolutionBase);
+        }
+    } catch {
+        throw cursorError("cursor_parse_failed", status, providerRequestId);
+    }
+
+    if (candidate.protocol !== "https:") throw cursorError("cursor_protocol_invalid", status, providerRequestId);
+    if (candidate.username || candidate.password) throw cursorError("cursor_credentials_invalid", status, providerRequestId);
+    if (candidate.origin !== configuredBase.origin) throw cursorError("cursor_origin_invalid", status, providerRequestId);
+
+    const accommodationPath = `${configuredBasePath}/accommodations` || "/accommodations";
+    if (candidate.pathname !== accommodationPath && candidate.pathname !== `${accommodationPath}/`) {
+        throw cursorError("cursor_path_invalid", status, providerRequestId);
+    }
+    return candidate;
 }
 
 export class AvantioApiGateway {
@@ -131,31 +183,11 @@ export class AvantioApiGateway {
             throw new AvantioProviderError("temporarily_unavailable", "accommodation_index_cursor_invalid", "Invalid accommodation continuation cursor.", "request_built");
         }
 
-        const validateCursor = (candidate: URL): void => {
-            const configuredBase = new URL(this.baseUrl);
-            const basePath = configuredBase.pathname.replace(/\/+$/, "") || "/";
-            const pathInsideBase = basePath === "/"
-                || candidate.pathname === basePath
-                || candidate.pathname.startsWith(`${basePath}/`);
-            if (candidate.protocol !== "https:"
-                || candidate.origin !== configuredBase.origin
-                || !pathInsideBase
-                || candidate.username
-                || candidate.password) {
-                logAccommodationIndexDiagnostic("cursor_validation", "accommodation_index_cursor_invalid");
-                throw new AvantioProviderError("temporarily_unavailable", "accommodation_index_cursor_invalid", "Unsafe accommodation continuation cursor.", "request_built");
-            }
-        };
+        const configuredBase = new URL(this.baseUrl);
 
         let url: URL;
         if (nextPageUrl) {
-            try {
-                url = new URL(nextPageUrl, listUrl);
-            } catch {
-                logAccommodationIndexDiagnostic("cursor_resolution", "accommodation_index_cursor_invalid");
-                throw new AvantioProviderError("temporarily_unavailable", "accommodation_index_cursor_invalid", "Invalid accommodation continuation cursor.", "request_built");
-            }
-            validateCursor(url);
+            url = resolveAccommodationCursor(nextPageUrl, listUrl, configuredBase);
         } else {
             url = listUrl;
             url.searchParams.set("pagination_size", String(boundedPageSize));
@@ -207,24 +239,10 @@ export class AvantioApiGateway {
             throw new AvantioProviderError("temporarily_unavailable", "provider_subrequest_budget_exhausted", "A página excedeu o limite interno de registros.", "body_received", response.status, providerRequestId);
         }
         const next = (payload as { _links?: { next?: unknown } })._links?.next;
-        if (next !== undefined && next !== null && typeof next !== "string") {
-            logAccommodationIndexDiagnostic("cursor_resolution", "accommodation_index_cursor_invalid", response.status, providerRequestId);
-            throw new AvantioProviderError("temporarily_unavailable", "accommodation_index_cursor_invalid", "Invalid accommodation continuation cursor.", "body_received", response.status, providerRequestId);
-        }
-        if (next !== undefined && next !== null && typeof next !== "string") {
-            throw new AvantioProviderError("temporarily_unavailable", "accommodation_index_batch_failed", "A paginação de acomodações é inválida.", "body_received", response.status, providerRequestId);
-        }
+        const nextCursor = extractAccommodationCursor(next, response.status, providerRequestId);
         let resolvedNextPageUrl: string | null = null;
-        if (typeof next === "string" && next.trim()) {
-            let resolvedNext: URL;
-            try {
-                resolvedNext = new URL(next, url);
-            } catch {
-                logAccommodationIndexDiagnostic("cursor_resolution", "accommodation_index_cursor_invalid", response.status, providerRequestId);
-                throw new AvantioProviderError("temporarily_unavailable", "accommodation_index_cursor_invalid", "Invalid accommodation continuation cursor.", "body_received", response.status, providerRequestId);
-            }
-            validateCursor(resolvedNext);
-            resolvedNextPageUrl = resolvedNext.toString();
+        if (nextCursor) {
+            resolvedNextPageUrl = resolveAccommodationCursor(nextCursor, url, configuredBase, response.status, providerRequestId).toString();
         }
         return { records, nextPageUrl: resolvedNextPageUrl };
     }

@@ -135,6 +135,31 @@ describe("bounded incremental Avantio accommodation index", () => {
     expect((await testEnv.DB.prepare("SELECT COUNT(*) AS count FROM avantio_accommodation_reference_index WHERE generation_id = 'old-active'").first<{ count: number }>())?.count).toBe(0);
   });
 
+  it("continues the exact production root-relative resource cursor beyond the first ten records", async () => {
+    const productionEnv = { ...env, AVANTIO_BASE_URL: "https://provider.test/pms/v2" };
+    const firstRecords = Array.from({ length: 10 }, (_, index) => rawRecord(`production-${index}`, `REF-${index}`));
+    const expectedCursor = "https://provider.test/pms/v2/accommodations?page=2&cursor=opaque%2Fvalue&token=a%2Bb";
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(providerResponse({
+        data: firstRecords,
+        _links: { next: "/accommodations?page=2&cursor=opaque%2Fvalue&token=a%2Bb" },
+      }))
+      .mockResolvedValueOnce(providerResponse({ data: [rawRecord("production-10", "REF-10")] }));
+    vi.stubGlobal("fetch", fetchMock);
+    const service = new SyncAccommodationsService(productionEnv as any, undefined, undefined, undefined, () => new Date(), () => "production-root-generation");
+
+    const first = await service.sync();
+    const afterFirst = await new AccommodationReferenceIndexRepository(testEnv.DB).getState();
+    const second = await service.sync();
+
+    expect(first).toMatchObject({ synced: 10, complete: false, processed_records: 10, processed_pages: 1, building: true });
+    expect(afterFirst.next_page_url).toBe(expectedCursor);
+    expect(fetchMock.mock.calls[1][0]).toBe(expectedCursor);
+    expect(new URL(fetchMock.mock.calls[1][0]).searchParams.has("pagination_size")).toBe(false);
+    expect(second).toMatchObject({ synced: 1, complete: true, processed_records: 11, processed_pages: 2, building: false });
+    expect(fetchMock.mock.calls.every((call) => call[1]?.method === "GET")).toBe(true);
+  });
+
   it("resumes a failed production-pattern generation from its stored relative page-2 cursor", async () => {
     const now = new Date().toISOString();
     await testEnv.DB.prepare(`

@@ -23,7 +23,8 @@ afterEach(() => { vi.unstubAllGlobals(); });
 describe("AvantioApiGateway accommodation methods", () => {
   it.each([
     ["absolute", "https://provider.test/pms/v2/accommodations?cursor=abs&page=2", "https://provider.test/pms/v2/accommodations?cursor=abs&page=2"],
-    ["root-relative", "/pms/v2/accommodations?cursor=root&page=2", "https://provider.test/pms/v2/accommodations?cursor=root&page=2"],
+    ["root-relative with API base", "/pms/v2/accommodations?cursor=root&page=2", "https://provider.test/pms/v2/accommodations?cursor=root&page=2"],
+    ["root-relative resource", "/accommodations?cursor=opaque%2Fvalue&page=2", "https://provider.test/pms/v2/accommodations?cursor=opaque%2Fvalue&page=2"],
     ["query-only", "?cursor=query&page=2", "https://provider.test/pms/v2/accommodations?cursor=query&page=2"],
     ["path-relative", "accommodations?cursor=path&page=2", "https://provider.test/pms/v2/accommodations?cursor=path&page=2"],
   ])("normalizes a %s provider next link to a safe absolute cursor", async (_format, next, expected) => {
@@ -43,6 +44,31 @@ describe("AvantioApiGateway accommodation methods", () => {
     expect(continuation.nextPageUrl).toBeNull();
   });
 
+  it.each(["href", "url", "uri"] as const)("accepts a simple next-link object containing %s", async (field) => {
+    const cursorEnv = { ...env, AVANTIO_BASE_URL: "https://provider.test/pms/v2" };
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(response({
+      data: [],
+      _links: { next: { [field]: "/accommodations?cursor=object%2Fvalue" } },
+    })));
+
+    const page = await new AvantioApiGateway(cursorEnv).getAccommodationsPage(null, 10);
+
+    expect(page.nextPageUrl).toBe("https://provider.test/pms/v2/accommodations?cursor=object%2Fvalue");
+  });
+
+  it.each([
+    ["arbitrary object", { token: "opaque" }],
+    ["conflicting link fields", { href: "/accommodations?cursor=one", url: "/accommodations?cursor=two" }],
+  ])("rejects a %s next-link representation", async (_label, next) => {
+    const cursorEnv = { ...env, AVANTIO_BASE_URL: "https://provider.test/pms/v2" };
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(response({ data: [], _links: { next } })));
+
+    await expect(new AvantioApiGateway(cursorEnv).getAccommodationsPage(null, 10)).rejects.toMatchObject({ code: "accommodation_index_cursor_invalid" });
+    expect(JSON.stringify(errorSpy.mock.calls)).toContain("cursor_non_string");
+    expect(JSON.stringify(errorSpy.mock.calls)).not.toContain("opaque");
+  });
+
   it("follows an absolute continuation without rewriting any provider cursor parameters", async () => {
     const cursorEnv = { ...env, AVANTIO_BASE_URL: "https://provider.test/pms/v2" };
     const cursor = "https://provider.test/pms/v2/accommodations?token=a%2Fb&cursor=x%2By&page=2&pagination_size=7&token=second";
@@ -55,11 +81,14 @@ describe("AvantioApiGateway accommodation methods", () => {
   });
 
   it.each([
-    ["foreign origin", "https://evil.test/pms/v2/accommodations?page=2"],
-    ["non-HTTPS", "http://provider.test/pms/v2/accommodations?page=2"],
-    ["outside API base path", "https://provider.test/other/accommodations?page=2"],
-    ["unparseable", "http://["],
-  ])("rejects a %s continuation cursor before fetch", async (_label, cursor) => {
+    ["foreign origin", "https://evil.test/pms/v2/accommodations?page=2", "cursor_origin_invalid"],
+    ["non-HTTPS", "http://provider.test/pms/v2/accommodations?page=2", "cursor_protocol_invalid"],
+    ["credentials", "https://user:password@provider.test/pms/v2/accommodations?page=2", "cursor_credentials_invalid"],
+    ["bookings path", "https://provider.test/pms/v2/bookings?page=2", "cursor_path_invalid"],
+    ["accommodation detail path", "https://provider.test/pms/v2/accommodations/id?page=2", "cursor_path_invalid"],
+    ["outside API base path", "https://provider.test/other/accommodations?page=2", "cursor_path_invalid"],
+    ["unparseable", "http://[", "cursor_parse_failed"],
+  ])("rejects a %s continuation cursor before fetch", async (_label, cursor, reason) => {
     const cursorEnv = { ...env, AVANTIO_BASE_URL: "https://provider.test/pms/v2" };
     const fetchMock = vi.fn();
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
@@ -70,6 +99,7 @@ describe("AvantioApiGateway accommodation methods", () => {
       code: "accommodation_index_cursor_invalid",
     });
     expect(fetchMock).not.toHaveBeenCalled();
+    expect(JSON.stringify(errorSpy.mock.calls)).toContain(reason);
     expect(JSON.stringify(errorSpy.mock.calls)).not.toContain(cursor);
   });
 
