@@ -6,6 +6,9 @@
 	"observability": {
 		"enabled": true
 	},
+	"triggers": {
+		"crons": ["* * * * *"]
+	},
 	"d1_databases": [
 		{
 			"binding": "DB",
@@ -15,7 +18,7 @@
 	],
 	"vars": {
     "AVANTIO_BASE_URL": "https://api.avantio.pro/pms/v2",
-    "AVANTIO_ACCOMMODATION_CREATE_ENABLED": "false",
-    "AVANTIO_ACCOMMODATION_INDEX_MAX_AGE_SECONDS": "900"
+    "AVANTIO_ACCOMMODATION_CREATE_ENABLED": "true",
+    "AVANTIO_ACCOMMODATION_INDEX_MAX_AGE_SECONDS": "14400"
   }
 }

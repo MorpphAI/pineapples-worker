@@ -24,6 +24,7 @@ export default defineWorkersConfig({
 					bindings: {
 						API_KEY: "test-key",
 						AVANTIO_API_KEY: "test-provider-key",
+						AVANTIO_ACCOMMODATION_CREATE_ENABLED: "false",
 						MIGRATIONS: migrations,
 					},
 				},

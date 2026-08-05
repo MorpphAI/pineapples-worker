@@ -13,6 +13,7 @@ import { AvantioAccommodation } from "../../../types/avantioTypes";
 
 export const ACCOMMODATION_SYNC_PAGE_SIZE = 10;
 export const ACCOMMODATION_SYNC_MAX_PROVIDER_REQUESTS = 20;
+export const ACCOMMODATION_SYNC_LEASE_SECONDS = 300;
 
 export type AccommodationSyncResult = {
     synced: number;
@@ -45,7 +46,7 @@ export class ProviderSubrequestBudget {
 }
 
 type SyncGateway = Pick<AvantioApiGateway, "getAccommodationsPage" | "getAccommodationStrict">;
-type ReferenceIndex = Pick<AccommodationReferenceIndexRepository, "getState" | "startGeneration" | "resumeGeneration" | "markBatchFailed" | "savePage">;
+type ReferenceIndex = Pick<AccommodationReferenceIndexRepository, "getState" | "acquireBatchLease" | "renewBatchLease" | "releaseBatchLease" | "startGeneration" | "resumeGeneration" | "markBatchFailed" | "savePage">;
 type AccommodationCache = Pick<AccommodationRepository, "upsertMany">;
 
 function optionalString(value: unknown): string | null {
@@ -75,6 +76,7 @@ export class SyncAccommodationsService {
         accommodationRepo?: AccommodationCache,
         private readonly now: () => Date = () => new Date(),
         private readonly generationId: () => string = () => crypto.randomUUID(),
+        private readonly leaseId: () => string = () => crypto.randomUUID(),
     ) {
         this.avantioApiGateway = gateway ?? new AvantioApiGateway(env);
         this.accommodationRepo = accommodationRepo ?? new AccommodationRepository(env.DB);
@@ -84,7 +86,16 @@ export class SyncAccommodationsService {
     async sync(): Promise<AccommodationSyncResult> {
         const budget = new ProviderSubrequestBudget();
         let state: AccommodationIndexSyncState | null = null;
+        const leaseOwner = this.leaseId();
+        let leaseAcquired = false;
         try {
+            const leaseStartedAt = this.now();
+            const leaseExpiresAt = new Date(leaseStartedAt.getTime() + ACCOMMODATION_SYNC_LEASE_SECONDS * 1000);
+            leaseAcquired = await this.referenceIndex.acquireBatchLease(leaseOwner, leaseStartedAt.toISOString(), leaseExpiresAt.toISOString());
+            if (!leaseAcquired) {
+                throw new AccommodationSyncError("accommodation_index_busy", "Outro lote do índice já está em execução.");
+            }
+
             state = await this.referenceIndex.getState();
             const now = this.now().toISOString();
             if (!state.building_generation_id) {
@@ -94,6 +105,13 @@ export class SyncAccommodationsService {
             }
             if (!state.building_generation_id) {
                 throw new AccommodationSyncError("accommodation_index_batch_failed", "Não foi possível iniciar uma geração do índice.");
+            }
+
+            const renewalStartedAt = this.now();
+            const renewedUntil = new Date(renewalStartedAt.getTime() + ACCOMMODATION_SYNC_LEASE_SECONDS * 1000);
+            const leaseRenewed = await this.referenceIndex.renewBatchLease(leaseOwner, renewalStartedAt.toISOString(), renewedUntil.toISOString());
+            if (!leaseRenewed) {
+                throw new AccommodationSyncError("accommodation_index_lease_lost", "A posse do lote de sincronização expirou.");
             }
 
             budget.consume();
@@ -151,10 +169,12 @@ export class SyncAccommodationsService {
 
             let saved: AccommodationIndexSyncState;
             try {
-                saved = await this.referenceIndex.savePage(state.building_generation_id, indexRecords, page.nextPageUrl, inspectedAt);
-            } catch {
-                logSyncDiagnostic("d1_index_write", "accommodation_index_index_write_failed");
-                throw new AccommodationSyncError("accommodation_index_index_write_failed", "Accommodation index write failed.");
+                saved = await this.referenceIndex.savePage(state.building_generation_id, indexRecords, page.nextPageUrl, inspectedAt, leaseOwner);
+            } catch (error) {
+                const code = error instanceof AccommodationIndexError ? error.code : "accommodation_index_index_write_failed";
+                logSyncDiagnostic("d1_index_write", code);
+                if (error instanceof AccommodationIndexError) throw error;
+                throw new AccommodationSyncError(code, "Accommodation index write failed.");
             }
             return {
                 synced: indexRecords.length,
@@ -167,9 +187,17 @@ export class SyncAccommodationsService {
         } catch (error) {
             const normalized = syncError(error);
             if (state?.building_generation_id) {
-                try { await this.referenceIndex.markBatchFailed(normalized.code, this.now().toISOString()); } catch { /* preserve the original sanitized failure */ }
+                try { await this.referenceIndex.markBatchFailed(normalized.code, this.now().toISOString(), leaseOwner); } catch { /* preserve the original sanitized failure */ }
             }
             throw normalized;
+        } finally {
+            if (leaseAcquired) {
+                try {
+                    await this.referenceIndex.releaseBatchLease(leaseOwner);
+                } catch {
+                    logSyncDiagnostic("lease_release", "accommodation_index_lease_release_failed");
+                }
+            }
         }
     }
 }

@@ -43,7 +43,8 @@ async function resetIndex() {
     UPDATE avantio_accommodation_index_sync_state
     SET active_generation_id = NULL, building_generation_id = NULL, next_page_url = NULL,
         status = 'idle', started_at = NULL, completed_at = NULL, updated_at = CURRENT_TIMESTAMP,
-        processed_records = 0, processed_pages = 0, last_error_code = NULL
+        processed_records = 0, processed_pages = 0, last_error_code = NULL,
+        lease_owner = NULL, lease_expires_at = NULL
     WHERE singleton_id = 1
   `).run();
 }

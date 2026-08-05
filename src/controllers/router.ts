@@ -23,6 +23,7 @@ import { GetAccommodationById } from "./v1/accommodation/getAccommodations/getAc
 import { UpdateAccommodationCleaningProfile } from "./v1/accommodation/updateCleaningProfile/updateCleaningProfile";
 import { ResetAccommodationCleaningProfile } from "./v1/accommodation/resetCleaningProfile/resetCleaningProfile";
 import { SyncAccommodations } from "./v1/accommodation/syncAccommodations/syncAccommodations";
+import { GetAccommodationIndexStatus } from "./v1/accommodation/getAccommodationIndexStatus/getAccommodationIndexStatus";
 import { CangeAuthorizationDecisions } from "./v1/cange/authorizationDecisions/authorizationDecisions";
 import { RemovedKanbanAuthorizationSync } from "./v1/kanban/syncAuthorizationStatus/syncAuthorizationStatus";
 import { AvantioAccommodationCreate, AvantioAccommodationReadiness, AvantioAccommodationReconcile } from "./v1/avantio/accommodations/phase3";
@@ -33,6 +34,7 @@ pineapplesRouter.get("/v1/appointments", GetAppointments);
 
 pineapplesRouter.get("/v1/accommodations", GetAccommodations);
 pineapplesRouter.post("/v1/accommodations/sync", SyncAccommodations);
+pineapplesRouter.get("/v1/accommodations/index/status", GetAccommodationIndexStatus);
 pineapplesRouter.get("/v1/accommodations/:id", GetAccommodationById);
 pineapplesRouter.patch("/v1/accommodations/:id/cleaning-profile", UpdateAccommodationCleaningProfile);
 pineapplesRouter.post("/v1/accommodations/:id/reset-cleaning-profile", ResetAccommodationCleaningProfile);
