@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
-import { AvantioAccommodationService, AvantioProviderError, CanonicalPropertyV1Schema, CreateResponseSchema, ReconcileResponseSchema } from "../../src/integrations/avantio/accommodations";
-import { productionCanonicalProperty } from "../fixtures/avantioAccommodationCreate";
+import { AvantioAccommodationService, AvantioProviderError, CanonicalPropertyV1Schema, CreateResponseSchema, parseAvantioProviderError, ReconcileResponseSchema } from "../../src/integrations/avantio/accommodations";
+import { productionCanonicalProperty, providerValidationTreeError } from "../fixtures/avantioAccommodationCreate";
 
 const property = CanonicalPropertyV1Schema.parse(productionCanonicalProperty);
 const enabledEnv = { AVANTIO_API_KEY: "", AVANTIO_BASE_URL: "", AVANTIO_ACCOMMODATION_CREATE_ENABLED: "true", API_KEY: "", DB: {} as D1Database };
@@ -94,6 +94,33 @@ describe("AvantioAccommodationService", () => {
       jobId: "33333333-3333-4333-8333-333333333333",
       propertyId: "22222222-2222-4222-8222-222222222222",
     });
+  });
+
+  it("orders the HTTP issue, provider summary, and production validation constraints", async () => {
+    const fake = gateway([]);
+    fake.createAccommodation.mockRejectedValue(new AvantioProviderError(
+      "provider_rejected",
+      "provider_http_400",
+      "A Avantio rejeitou ou não conseguiu processar a solicitação.",
+      "body_received",
+      400,
+      null,
+      parseAvantioProviderError(JSON.stringify(providerValidationTreeError)),
+    ));
+
+    const result = await new AvantioAccommodationService(enabledEnv, fake as any).create(property, 1);
+
+    expect(result.status).toBe(422);
+    expect(result.body.errors.map((issue) => issue.code)).toEqual([
+      "provider_http_400",
+      "provider_validation_error",
+      "provider_isdefined",
+      "provider_isenum",
+    ]);
+    expect(result.body.errors.slice(2).map((issue) => issue.provider_path)).toEqual([
+      "distribution.bathrooms[0].type",
+      "distribution.bathrooms[0].type",
+    ]);
   });
 
   it("returns public uncertain with the provider request ID after an unusable 2xx success", async () => {

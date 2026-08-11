@@ -30,4 +30,31 @@ export const rawWithExternalReference = { id: "accommodation-123", name: "NSC314
 export const rawWithoutReference = { id: "accommodation-456", name: "Other", status: "ENABLED", galleryId: "gallery", location: {} };
 export const multipleExactMatches = [rawWithExternalReference, { ...rawWithExternalReference, id: "accommodation-789" }];
 export const providerValidationError = { errors: [{ field: "location.address", message: "Invalid address" }] };
+export const providerValidationTreeError = {
+  message: "Some fields contain errors. See details for information about failed constraints.",
+  details: [
+    {
+      property: "distribution",
+      children: [
+        {
+          property: "bathrooms",
+          children: [
+            {
+              property: "0",
+              children: [
+                {
+                  property: "type",
+                  constraints: {
+                    isDefined: "type should not be null",
+                    isEnum: "type must be one of the allowed values",
+                  },
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    },
+  ],
+};
 export const providerTemporaryError = { message: "Temporarily unavailable" };

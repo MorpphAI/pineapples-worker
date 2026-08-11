@@ -5,8 +5,9 @@ import { authoritativeAccommodationId, AccommodationCandidate, accommodationToCa
 import { AvantioProviderError, classifyReceivedStatus } from "../../integrations/avantio/accommodations/providerErrors";
 import {
     AVANTIO_PROVIDER_ERROR_MAX_BODY_BYTES,
+    AvantioProviderErrorParserMetadata,
     AvantioProviderIssue,
-    parseAvantioProviderError,
+    parseAvantioProviderErrorWithMetadata,
 } from "../../integrations/avantio/accommodations/providerErrorParser";
 import {
     AccommodationIndexError,
@@ -75,6 +76,7 @@ function logCreateProviderRejected(
     contentType: string | null,
     bodyByteCount: number,
     bodySha256: string,
+    parserMetadata: AvantioProviderErrorParserMetadata,
 ): void {
     const diagnostic: Record<string, unknown> = {
         event: "avantio_create_provider_rejected",
@@ -89,6 +91,12 @@ function logCreateProviderRejected(
         response_content_type: contentType,
         response_body_byte_count: bodyByteCount,
         response_body_sha256: bodySha256,
+        parsed_json: parserMetadata.parsed_json,
+        top_level_shape: parserMetadata.top_level_shape,
+        recognized_container_keys: parserMetadata.recognized_container_keys,
+        validation_nodes_seen: parserMetadata.validation_nodes_seen,
+        constraint_nodes_seen: parserMetadata.constraint_nodes_seen,
+        child_nodes_seen: parserMetadata.child_nodes_seen,
     };
     const safeProviderRequestId = safeDiagnosticId(providerRequestId);
     if (safeProviderRequestId) diagnostic.provider_request_id = safeProviderRequestId;
@@ -483,7 +491,8 @@ export class AvantioApiGateway {
                 boundedBody = await readBoundedProviderBody(response);
             } catch {
                 const bodySha256 = await sha256Hex(new Uint8Array());
-                logCreateProviderRejected(diagnosticContext, response.status, outcome, providerRequestId, [], contentType, 0, bodySha256);
+                const parserMetadata = parseAvantioProviderErrorWithMetadata("").metadata;
+                logCreateProviderRejected(diagnosticContext, response.status, outcome, providerRequestId, [], contentType, 0, bodySha256, parserMetadata);
                 throw new AvantioProviderError(
                     kind,
                     "provider_body_unreadable",
@@ -495,10 +504,11 @@ export class AvantioApiGateway {
                     { contentType, bodyByteCount: 0, bodySha256, extractedIssueCount: 0 },
                 );
             }
-            const issues = parseAvantioProviderError(boundedBody.text);
+            const parsedError = parseAvantioProviderErrorWithMetadata(boundedBody.text);
+            const issues = parsedError.issues;
             const bodySha256 = await sha256Hex(boundedBody.bytes);
             const metadata = { contentType, bodyByteCount: boundedBody.bytes.byteLength, bodySha256, extractedIssueCount: issues.length };
-            logCreateProviderRejected(diagnosticContext, response.status, outcome, providerRequestId, issues, contentType, metadata.bodyByteCount, bodySha256);
+            logCreateProviderRejected(diagnosticContext, response.status, outcome, providerRequestId, issues, contentType, metadata.bodyByteCount, bodySha256, parsedError.metadata);
             throw new AvantioProviderError(
                 kind,
                 `provider_http_${response.status}`,

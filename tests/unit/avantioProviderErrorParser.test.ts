@@ -6,7 +6,9 @@ import {
   AVANTIO_PROVIDER_ERROR_MAX_MESSAGE_LENGTH,
   AVANTIO_PROVIDER_ERROR_MAX_PATH_LENGTH,
   parseAvantioProviderError,
+  parseAvantioProviderErrorWithMetadata,
 } from "../../src/integrations/avantio/accommodations";
+import { providerValidationTreeError } from "../fixtures/avantioAccommodationCreate";
 
 describe("parseAvantioProviderError", () => {
   it("extracts errors with field and message", () => {
@@ -92,5 +94,109 @@ describe("parseAvantioProviderError", () => {
   it("does not inspect an issue placed beyond the 64 KiB body bound", () => {
     const body = `${" ".repeat(AVANTIO_PROVIDER_ERROR_MAX_BODY_BYTES)}${JSON.stringify({ errors: [{ message: "outside bound" }] })}`;
     expect(parseAvantioProviderError(body)).toEqual([]);
+  });
+
+  it("extracts a simple class-validator constraints object", () => {
+    expect(parseAvantioProviderError(JSON.stringify({ details: { property: "type", constraints: { isEnum: "Invalid type" } } }))).toEqual([{
+      code: "provider_isenum",
+      message: "Invalid type",
+      canonical_path: null,
+      provider_path: "type",
+      section: "provider",
+    }]);
+  });
+
+  it("builds dotted paths and numeric indexes through nested children", () => {
+    const issues = parseAvantioProviderError(JSON.stringify(providerValidationTreeError));
+    expect(issues).toEqual([
+      expect.objectContaining({ code: "provider_validation_error", message: providerValidationTreeError.message, provider_path: null }),
+      expect.objectContaining({ code: "provider_isdefined", message: "type should not be null", provider_path: "distribution.bathrooms[0].type" }),
+      expect.objectContaining({ code: "provider_isenum", message: "type must be one of the allowed values", provider_path: "distribution.bathrooms[0].type" }),
+    ]);
+  });
+
+  it("supports errors with nested children and multiple constraints", () => {
+    const issues = parseAvantioProviderError(JSON.stringify({ errors: [{
+      property: "capacity",
+      children: [{ property: "maxAdults", constraints: { min: "maxAdults must not be less than 1", isDefined: "maxAdults is required" } }],
+    }] }));
+    expect(issues).toEqual([
+      expect.objectContaining({ code: "provider_min", provider_path: "capacity.maxAdults" }),
+      expect.objectContaining({ code: "provider_isdefined", provider_path: "capacity.maxAdults" }),
+    ]);
+  });
+
+  it("prefers an explicit provider path over a synthesized property path", () => {
+    expect(parseAvantioProviderError(JSON.stringify({ details: [{
+      property: "conflictingProperty",
+      field: "distribution.explicitType",
+      constraints: { isEnum: "Invalid type" },
+    }] }))[0].provider_path).toBe("distribution.explicitType");
+  });
+
+  it("accepts nested arrays and ignores empty children and non-string constraints", () => {
+    const issues = parseAvantioProviderError(JSON.stringify({ details: [[
+      { property: "empty", children: [] },
+      { property: "capacity", children: [[{ property: "maxAdults", constraints: { min: 1, max: null, valid: "Invalid capacity" } }]] },
+    ]] }));
+    expect(issues).toEqual([expect.objectContaining({ code: "provider_valid", message: "Invalid capacity", provider_path: "capacity.maxAdults" })]);
+  });
+
+  it("never traverses or exposes target and value payloads", () => {
+    const escaped = JSON.stringify(parseAvantioProviderError(JSON.stringify({ details: [{
+      property: "type",
+      constraints: { isDefined: "type is required" },
+      target: { details: [{ property: "authorization", constraints: { leaked: "target-secret=never" } }] },
+      value: { children: [{ property: "apiKey", constraints: { leaked: "value-secret=never" } }] },
+    }] })));
+    expect(escaped).toContain("type is required");
+    expect(escaped).not.toContain("target-secret");
+    expect(escaped).not.toContain("value-secret");
+    expect(escaped).not.toContain("authorization");
+    expect(escaped).not.toContain("apiKey");
+  });
+
+  it("still enforces depth for validation children", () => {
+    let nested: unknown = { property: "leaf", constraints: { isDefined: "Too deep" } };
+    for (let depth = 0; depth < 10; depth += 1) nested = { property: `level${depth}`, children: [nested] };
+    expect(parseAvantioProviderError(JSON.stringify({ details: [nested] }))).toEqual([]);
+  });
+
+  it("still limits class-validator constraints to 20 issues", () => {
+    const constraints = Object.fromEntries(Array.from({ length: 30 }, (_, index) => [`rule${index}`, `Message ${index}`]));
+    expect(parseAvantioProviderError(JSON.stringify({ details: { property: "type", constraints } }))).toHaveLength(AVANTIO_PROVIDER_ERROR_MAX_ISSUES);
+  });
+
+  it("applies message, path, and code bounds to constraint issues", () => {
+    const [issue] = parseAvantioProviderError(JSON.stringify({ details: {
+      property: "p".repeat(400),
+      constraints: { [`rule${"c".repeat(200)}`]: "m".repeat(700) },
+    } }));
+    expect(issue.provider_path).toHaveLength(AVANTIO_PROVIDER_ERROR_MAX_PATH_LENGTH);
+    expect(issue.message).toHaveLength(AVANTIO_PROVIDER_ERROR_MAX_MESSAGE_LENGTH);
+    expect(issue.code).toHaveLength(AVANTIO_PROVIDER_ERROR_MAX_CODE_LENGTH);
+  });
+
+  it("deduplicates identical constraint issues", () => {
+    const node = { property: "type", constraints: { isEnum: "Invalid type" } };
+    expect(parseAvantioProviderError(JSON.stringify({ details: [node, node] }))).toHaveLength(1);
+  });
+
+  it("reports only allowlisted structural metadata", () => {
+    const result = parseAvantioProviderErrorWithMetadata(JSON.stringify({
+      ...providerValidationTreeError,
+      arbitraryProviderKey: { secretPayload: "never-report" },
+    }));
+    expect(result.metadata).toEqual({
+      parsed_json: true,
+      top_level_shape: "object",
+      recognized_container_keys: ["details", "children", "constraints", "message"],
+      validation_nodes_seen: 4,
+      constraint_nodes_seen: 1,
+      child_nodes_seen: 3,
+      extracted_issue_count: 3,
+    });
+    expect(JSON.stringify(result.metadata)).not.toContain("arbitraryProviderKey");
+    expect(JSON.stringify(result.metadata)).not.toContain("secretPayload");
   });
 });
