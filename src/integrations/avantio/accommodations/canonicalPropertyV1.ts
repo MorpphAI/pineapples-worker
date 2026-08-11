@@ -44,6 +44,7 @@ export const CanonicalPropertyV1Schema = z.object({
   }).strict(),
   kitchen: z.object({
     available: triState,
+    layout_type: z.enum(["american", "independent"]).nullable().optional(),
     cooktop_type: z.enum(["gas", "electric", "induction"]).nullable(),
     frost_free_fridge: z.boolean(),
     appliances: z.array(z.string()),

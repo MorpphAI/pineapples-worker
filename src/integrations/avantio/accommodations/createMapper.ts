@@ -5,6 +5,25 @@ import type { ReadinessIssue } from "./readiness";
 const propertyTypes = { apartment: "APARTMENT", house: "HOUSE", studio: "STUDIO", loft: "APARTMENT", room: "RENT_BY_ROOM" } as const;
 const bedTypes = { single: "INDIVIDUAL", double: "DOUBLE", queen: "QUEENSIZE", king: "KINGSIZE", bunk: "BUNK" } as const;
 const cooktops = { gas: "GAS", electric: "ELECTRIC", induction: "INDUCTION" } as const;
+const kitchenTypes = { american: "AMERICAN", independent: "INDEPENDENT" } as const;
+const kitchenAppliances = {
+  "Cafeteira": "COFFEE_MACHINE",
+  "Máq. de expresso": "COFFEE_MACHINE",
+  "Torradeira": "TOASTER",
+  "Micro-ondas": "MICROWAVE",
+  "Forno": "OVEN",
+  "Forninho": "OVEN",
+  "Geladeira": "FRIDGE",
+  "Freezer": "FREEZER",
+  "Lava-louça": "DISHWASHER",
+  "Chaleira elétrica": "ELECTRIC_KETTLE",
+  "Máq. de lavar": "WASHING_MACHINE",
+  "Máq. de secar": "DRYER",
+  "Air fryer": "FRYER",
+} as const;
+
+type AvantioKitchenType = typeof kitchenTypes[keyof typeof kitchenTypes];
+type AvantioKitchenAppliance = typeof kitchenAppliances[keyof typeof kitchenAppliances] | "FRIDGE" | "KITCHEN_UTENSILS";
 
 export type CreateMappingResult = { payload: AvantioAccommodationCreateRequest | null; errors: ReadinessIssue[]; warnings: ReadinessIssue[] };
 
@@ -83,18 +102,51 @@ export function mapCanonicalToAvantioCreate(property: CanonicalPropertyV1): Crea
     else coordinates = { lat: String(latitude), lon: String(longitude) };
   }
 
-  let kitchen: { count: number; cooktop?: typeof cooktops[keyof typeof cooktops]; appliances?: string[] } | undefined;
-  if (property.kitchen.available === true) {
-    kitchen = { count: 1 };
+  const hasKitchenEvidence = property.kitchen.available === true
+    || property.kitchen.layout_type != null
+    || property.kitchen.cooktop_type != null
+    || property.kitchen.frost_free_fridge === true
+    || property.kitchen.appliances.length > 0
+    || property.kitchen.utensils.length > 0;
+  let kitchen: { count: number; type: AvantioKitchenType; cooktop?: typeof cooktops[keyof typeof cooktops]; appliances?: AvantioKitchenAppliance[] } | undefined;
+  if (hasKitchenEvidence) {
+    const mappedKitchenType = property.kitchen.layout_type ? kitchenTypes[property.kitchen.layout_type] : undefined;
+    if (!mappedKitchenType) {
+      errors.push(issue(
+        "kitchen_layout_type_required",
+        "Informe se a cozinha é americana ou independente.",
+        "kitchen.layout_type",
+        "distribution.kitchens.type",
+        "kitchen",
+      ));
+    } else {
+      kitchen = { count: 1, type: mappedKitchenType };
+    }
+
     if (property.kitchen.cooktop_type) {
       const mapped = cooktops[property.kitchen.cooktop_type as keyof typeof cooktops];
       if (!mapped) errors.push(issue("unsupported_provider_mapping", "Cooktop sem mapeamento Avantio suportado.", "kitchen.cooktop_type", "distribution.kitchens.cooktop", "kitchen"));
-      else {
+      else if (kitchen) {
         kitchen.cooktop = mapped;
         if (property.kitchen.cooktop_type !== "gas") warnings.push(migrationWarning("kitchen.cooktop_type", "distribution.kitchens.cooktop"));
       }
     }
-    if (property.kitchen.appliances.length > 0) kitchen.appliances = [...property.kitchen.appliances];
+
+    const mappedAppliances = new Set<AvantioKitchenAppliance>();
+    property.kitchen.appliances.forEach((appliance, index) => {
+      const mapped = kitchenAppliances[appliance as keyof typeof kitchenAppliances];
+      if (mapped) mappedAppliances.add(mapped);
+      else warnings.push(issue(
+        "provider_appliance_unmapped",
+        "Este eletrodoméstico não possui um equivalente Avantio confirmado.",
+        `kitchen.appliances[${index}]`,
+        "distribution.kitchens.appliances",
+        "kitchen",
+      ));
+    });
+    if (property.kitchen.frost_free_fridge === true) mappedAppliances.add("FRIDGE");
+    if (property.kitchen.utensils.some((utensil) => utensil.trim().length > 0)) mappedAppliances.add("KITCHEN_UTENSILS");
+    if (kitchen && mappedAppliances.size > 0) kitchen.appliances = [...mappedAppliances];
   }
 
   if (errors.length > 0 || !providerPropertyType || property.identification.title === null || property.capacity.max_adults === null || property.capacity.bathroom_count === null || property.address.street === null || property.address.number === null || property.address.city === null || property.address.state === null || property.address.country === null) {

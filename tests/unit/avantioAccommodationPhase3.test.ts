@@ -19,6 +19,7 @@ describe("Avantio accommodation contracts and mapping", () => {
     const parsed = CanonicalPropertyV1Schema.parse(canonicalProperty);
     expect(parsed.capacity.max_children).toBeNull();
     expect(parsed.services.wifi.available).toBeNull();
+    expect(parsed.kitchen.layout_type).toBeUndefined();
   });
 
   it("maps the production-shaped apartment into a valid create request", () => {
@@ -34,6 +35,149 @@ describe("Avantio accommodation contracts and mapping", () => {
     expect(result.ready).toBe(true);
     expect(result.payload_hash).toMatch(/^[a-f0-9]{64}$/);
     expect(result.errors).toEqual([]);
+  });
+
+  it.each([
+    ["american", "AMERICAN"],
+    ["independent", "INDEPENDENT"],
+  ] as const)("maps kitchen layout %s to %s", (layoutType, providerType) => {
+    const property = CanonicalPropertyV1Schema.parse({
+      ...productionCanonicalProperty,
+      kitchen: { ...productionCanonicalProperty.kitchen, layout_type: layoutType },
+    });
+    expect(mapCanonicalToAvantioCreate(property).payload?.distribution.kitchens?.type).toBe(providerType);
+  });
+
+  it("requires a layout type when any kitchen evidence exists", async () => {
+    const property = CanonicalPropertyV1Schema.parse({
+      ...productionCanonicalProperty,
+      kitchen: { ...productionCanonicalProperty.kitchen, layout_type: null },
+    });
+    const result = await readiness(property);
+    expect(result.ready).toBe(false);
+    expect(result.payload).toBeNull();
+    expect(result.errors).toContainEqual({
+      code: "kitchen_layout_type_required",
+      message: "Informe se a cozinha é americana ou independente.",
+      canonical_path: "kitchen.layout_type",
+      provider_path: "distribution.kitchens.type",
+      section: "kitchen",
+    });
+  });
+
+  it("omits kitchens when there is no kitchen evidence", () => {
+    const property = CanonicalPropertyV1Schema.parse({
+      ...productionCanonicalProperty,
+      kitchen: {
+        available: false,
+        layout_type: null,
+        cooktop_type: null,
+        frost_free_fridge: false,
+        appliances: [],
+        utensils: [],
+      },
+    });
+    const mapped = mapCanonicalToAvantioCreate(property);
+    expect(mapped.errors).toEqual([]);
+    expect(mapped.payload?.distribution).not.toHaveProperty("kitchens");
+  });
+
+  it.each([
+    ["Cafeteira", "COFFEE_MACHINE"],
+    ["Máq. de expresso", "COFFEE_MACHINE"],
+    ["Torradeira", "TOASTER"],
+    ["Micro-ondas", "MICROWAVE"],
+    ["Geladeira", "FRIDGE"],
+    ["Freezer", "FREEZER"],
+    ["Forno", "OVEN"],
+    ["Forninho", "OVEN"],
+    ["Lava-louça", "DISHWASHER"],
+    ["Chaleira elétrica", "ELECTRIC_KETTLE"],
+    ["Máq. de lavar", "WASHING_MACHINE"],
+    ["Máq. de secar", "DRYER"],
+    ["Air fryer", "FRYER"],
+  ] as const)("maps canonical appliance %s to %s", (canonicalAppliance, providerAppliance) => {
+    const property = CanonicalPropertyV1Schema.parse({
+      ...productionCanonicalProperty,
+      kitchen: { ...productionCanonicalProperty.kitchen, appliances: [canonicalAppliance] },
+    });
+    const kitchen = mapCanonicalToAvantioCreate(property).payload?.distribution.kitchens;
+    expect(kitchen?.appliances).toEqual([providerAppliance]);
+    expect(kitchen?.appliances).not.toContain(canonicalAppliance);
+  });
+
+  it("adds confirmed generic appliances from fridge and utensil evidence", () => {
+    const property = CanonicalPropertyV1Schema.parse({
+      ...productionCanonicalProperty,
+      kitchen: {
+        ...productionCanonicalProperty.kitchen,
+        appliances: [],
+        frost_free_fridge: true,
+        utensils: ["Panela"],
+      },
+    });
+    expect(mapCanonicalToAvantioCreate(property).payload?.distribution.kitchens?.appliances).toEqual(["FRIDGE", "KITCHEN_UTENSILS"]);
+  });
+
+  it("deduplicates appliances mapped from multiple canonical signals", () => {
+    const property = CanonicalPropertyV1Schema.parse({
+      ...productionCanonicalProperty,
+      kitchen: {
+        ...productionCanonicalProperty.kitchen,
+        appliances: ["Cafeteira", "Máq. de expresso", "Geladeira", "Geladeira"],
+        frost_free_fridge: true,
+        utensils: ["Panela", "Espátula"],
+      },
+    });
+    expect(mapCanonicalToAvantioCreate(property).payload?.distribution.kitchens?.appliances).toEqual([
+      "COFFEE_MACHINE",
+      "FRIDGE",
+      "KITCHEN_UTENSILS",
+    ]);
+  });
+
+  it.each(["Liquidificador", "Chaleira", "Sanduicheira", "Adega", "Filtro de água", "Frigobar"])(
+    "warns and omits unsupported appliance %s",
+    (canonicalAppliance) => {
+      const property = CanonicalPropertyV1Schema.parse({
+        ...productionCanonicalProperty,
+        kitchen: { ...productionCanonicalProperty.kitchen, appliances: [canonicalAppliance] },
+      });
+      const mapped = mapCanonicalToAvantioCreate(property);
+      expect(mapped.errors).toEqual([]);
+      expect(mapped.payload?.distribution.kitchens?.appliances).toBeUndefined();
+      expect(mapped.warnings).toContainEqual({
+        code: "provider_appliance_unmapped",
+        message: "Este eletrodoméstico não possui um equivalente Avantio confirmado.",
+        canonical_path: "kitchen.appliances[0]",
+        provider_path: "distribution.kitchens.appliances",
+        section: "kitchen",
+      });
+    },
+  );
+
+  it("never places raw canonical appliance labels in the provider payload", () => {
+    const property = CanonicalPropertyV1Schema.parse({
+      ...productionCanonicalProperty,
+      kitchen: {
+        ...productionCanonicalProperty.kitchen,
+        appliances: ["Cafeteira", "Micro-ondas", "Geladeira", "Liquidificador", "Chaleira"],
+      },
+    });
+    const appliances = mapCanonicalToAvantioCreate(property).payload?.distribution.kitchens?.appliances ?? [];
+    expect(appliances).toEqual(["COFFEE_MACHINE", "MICROWAVE", "FRIDGE"]);
+    expect(appliances).not.toContain("JUICE_SQUEEZER");
+    expect(appliances).not.toContain("ELECTRIC_KETTLE");
+  });
+
+  it("rejects arbitrary provider kitchen type and appliance strings", () => {
+    const invalidType = structuredClone(knownGoodCreatePayload) as any;
+    invalidType.distribution.kitchens.type = "OPEN_PLAN";
+    expect(AvantioAccommodationCreateRequestSchema.safeParse(invalidType).success).toBe(false);
+
+    const invalidAppliance = structuredClone(knownGoodCreatePayload) as any;
+    invalidAppliance.distribution.kitchens.appliances = ["Cafeteira"];
+    expect(AvantioAccommodationCreateRequestSchema.safeParse(invalidAppliance).success).toBe(false);
   });
 
   it.each([
@@ -84,7 +228,7 @@ describe("Avantio accommodation contracts and mapping", () => {
   });
 
   it("hashes canonicalized payloads deterministically and preserves array order", async () => {
-    expect(await payloadHash(knownGoodCreatePayload)).toBe("ee9750ab7fa91d937d3c4746f53fe9f4e743458a9a8fb81c5a28f6b9901b6c86");
+    expect(await payloadHash(knownGoodCreatePayload)).toBe("8896037b2965e73721349a649776aff662ef424097b7e4aa57597a6a68ba4916");
     expect(await payloadHash({ b: [2, 1], a: 1 })).toBe(await payloadHash({ a: 1, b: [2, 1] }));
     expect(await payloadHash({ a: [1, 2] })).not.toBe(await payloadHash({ a: [2, 1] }));
   });

@@ -3,14 +3,32 @@ import { z } from "zod";
 export const AvantioPropertyTypeSchema = z.enum(["APARTMENT", "HOUSE", "STUDIO", "RENT_BY_ROOM"]);
 export const AvantioBedTypeSchema = z.enum(["INDIVIDUAL", "DOUBLE", "QUEENSIZE", "KINGSIZE", "BUNK"]);
 export const AvantioCooktopSchema = z.enum(["GAS", "ELECTRIC", "INDUCTION"]);
+export const AvantioKitchenTypeSchema = z.enum(["AMERICAN", "INDEPENDENT"]);
+export const AvantioKitchenApplianceSchema = z.enum([
+  "FRIDGE",
+  "FREEZER",
+  "OVEN",
+  "MICROWAVE",
+  "FRYER",
+  "TOASTER",
+  "COFFEE_MACHINE",
+  "TABLEWARE",
+  "KITCHEN_UTENSILS",
+  "DISHWASHER",
+  "WASHING_MACHINE",
+  "DRYER",
+  "JUICE_SQUEEZER",
+  "ELECTRIC_KETTLE",
+]);
 
 const CoordinatesSchema = z.object({ lat: z.string().min(1), lon: z.string().min(1) }).strict();
 const BedSchema = z.object({ type: AvantioBedTypeSchema, amount: z.number().int().positive() }).strict();
 const BedroomSchema = z.object({ beds: z.array(BedSchema).min(1), type: z.literal("BEDROOM"), floor: z.number().int() }).strict();
 const KitchenSchema = z.object({
   count: z.number().int().positive(),
+  type: AvantioKitchenTypeSchema,
   cooktop: AvantioCooktopSchema.optional(),
-  appliances: z.array(z.string()).optional(),
+  appliances: z.array(AvantioKitchenApplianceSchema).optional(),
 }).strict();
 
 export const AvantioAccommodationCreateRequestSchema = z.object({
