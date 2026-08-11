@@ -97,6 +97,17 @@ function logCreateProviderRejected(
         validation_nodes_seen: parserMetadata.validation_nodes_seen,
         constraint_nodes_seen: parserMetadata.constraint_nodes_seen,
         child_nodes_seen: parserMetadata.child_nodes_seen,
+        validation_map_nodes_seen: parserMetadata.validation_map_nodes_seen,
+        validation_map_candidate_keys_seen: parserMetadata.validation_map_candidate_keys_seen,
+        validation_map_string_leaves_seen: parserMetadata.validation_map_string_leaves_seen,
+        validation_map_string_array_leaves_seen: parserMetadata.validation_map_string_array_leaves_seen,
+        validation_map_rule_maps_seen: parserMetadata.validation_map_rule_maps_seen,
+        validation_map_nested_maps_seen: parserMetadata.validation_map_nested_maps_seen,
+        ignored_sensitive_keys_seen: parserMetadata.ignored_sensitive_keys_seen,
+        ignored_unsupported_leaves_seen: parserMetadata.ignored_unsupported_leaves_seen,
+        details_object_count: parserMetadata.details_object_count,
+        details_array_count: parserMetadata.details_array_count,
+        details_string_count: parserMetadata.details_string_count,
     };
     const safeProviderRequestId = safeDiagnosticId(providerRequestId);
     if (safeProviderRequestId) diagnostic.provider_request_id = safeProviderRequestId;

@@ -57,4 +57,38 @@ export const providerValidationTreeError = {
     },
   ],
 };
+export const providerFieldMapArrayError = {
+  error: "Bad Request",
+  message: "Some fields contain errors. See details for information about failed constraints.",
+  details: {
+    "distribution.bathrooms[0].type": ["type should not be empty"],
+  },
+};
+export const providerNestedFieldMapError = {
+  error: "Bad Request",
+  message: "Some fields contain errors. See details for information about failed constraints.",
+  details: {
+    distribution: {
+      bathrooms: {
+        "0": {
+          type: ["type should not be empty"],
+        },
+      },
+    },
+  },
+};
+export const providerFieldRuleMapError = {
+  details: {
+    "distribution.bathrooms[0].type": {
+      isDefined: "type is required",
+      isEnum: "type must contain an allowed value",
+    },
+  },
+};
+export const providerFieldMapListError = {
+  details: [
+    { "location.address": ["address is required"] },
+    { "capacity.maxAdults": "must be greater than zero" },
+  ],
+};
 export const providerTemporaryError = { message: "Temporarily unavailable" };

@@ -2,7 +2,7 @@ import { env as testEnv } from "cloudflare:test";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AvantioApiGateway } from "../../src/apiGateways/avantio/getAppointments";
 import { AvantioProviderError } from "../../src/integrations/avantio/accommodations";
-import { createSuccess, createSuccessMissingId, knownGoodCreatePayload, providerTemporaryError, providerValidationError, providerValidationTreeError, rawWithExternalReference } from "../fixtures/avantioAccommodationCreate";
+import { createSuccess, createSuccessMissingId, knownGoodCreatePayload, providerFieldMapArrayError, providerTemporaryError, providerValidationError, rawWithExternalReference } from "../fixtures/avantioAccommodationCreate";
 
 const env = { AVANTIO_API_KEY: "provider-secret", AVANTIO_BASE_URL: "https://provider.test", AVANTIO_ACCOMMODATION_CREATE_ENABLED: "true", AVANTIO_ACCOMMODATION_INDEX_MAX_AGE_SECONDS: "900", API_KEY: "incoming-secret", DB: testEnv.DB };
 function response(body: unknown, status = 200, headers: Record<string, string> = {}) { return new Response(typeof body === "string" ? body : JSON.stringify(body), { status, headers: { "content-type": "application/json", ...headers } }); }
@@ -282,7 +282,7 @@ describe("AvantioApiGateway accommodation methods", () => {
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
     const rawOnlyValue = "raw-provider-value-never-logged";
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(response({
-      ...providerValidationTreeError,
+      ...providerFieldMapArrayError,
       arbitraryProviderKey: { target: rawOnlyValue, value: "submitted-property-never-logged" },
     }, 400)));
     await expect(new AvantioApiGateway(env).createAccommodation(knownGoodCreatePayload, {
@@ -297,23 +297,32 @@ describe("AvantioApiGateway accommodation methods", () => {
     expect(logged).toContain("33333333-3333-4333-8333-333333333333");
     expect(logged).toContain("22222222-2222-4222-8222-222222222222");
     expect(logged).toContain("provider_validation_error");
-    expect(logged).toContain("provider_isdefined");
-    expect(logged).toContain("provider_isenum");
     expect(logged).toContain("distribution.bathrooms[0].type");
     expect(logged).not.toContain(rawOnlyValue);
     expect(logged).not.toContain("submitted-property-never-logged");
-    expect(logged).not.toContain("type should not be null");
+    expect(logged).not.toContain("type should not be empty");
     expect(logged).not.toContain("provider-secret"); expect(logged).not.toContain("incoming-secret"); expect(logged).not.toContain("Avenida Exemplo");
 
     const diagnostic = JSON.parse(String(errorSpy.mock.calls[0][0]));
     expect(diagnostic).toMatchObject({
       parsed_json: true,
       top_level_shape: "object",
-      recognized_container_keys: ["details", "children", "constraints", "message"],
-      validation_nodes_seen: 4,
-      constraint_nodes_seen: 1,
-      child_nodes_seen: 3,
-      extracted_issue_count: 3,
+      recognized_container_keys: ["error", "details", "message"],
+      validation_nodes_seen: 0,
+      constraint_nodes_seen: 0,
+      child_nodes_seen: 0,
+      validation_map_nodes_seen: 1,
+      validation_map_candidate_keys_seen: 1,
+      validation_map_string_leaves_seen: 1,
+      validation_map_string_array_leaves_seen: 1,
+      validation_map_rule_maps_seen: 0,
+      validation_map_nested_maps_seen: 0,
+      ignored_sensitive_keys_seen: 0,
+      ignored_unsupported_leaves_seen: 0,
+      details_object_count: 1,
+      details_array_count: 0,
+      details_string_count: 0,
+      extracted_issue_count: 2,
     });
     expect(diagnostic.recognized_container_keys.every((key: string) => ["errors", "error", "validationErrors", "violations", "issues", "details", "children", "constraints", "message"].includes(key))).toBe(true);
     expect(logged).not.toContain("arbitraryProviderKey");

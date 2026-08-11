@@ -8,7 +8,13 @@ import {
   parseAvantioProviderError,
   parseAvantioProviderErrorWithMetadata,
 } from "../../src/integrations/avantio/accommodations";
-import { providerValidationTreeError } from "../fixtures/avantioAccommodationCreate";
+import {
+  providerFieldMapArrayError,
+  providerFieldMapListError,
+  providerFieldRuleMapError,
+  providerNestedFieldMapError,
+  providerValidationTreeError,
+} from "../fixtures/avantioAccommodationCreate";
 
 describe("parseAvantioProviderError", () => {
   it("extracts errors with field and message", () => {
@@ -194,9 +200,149 @@ describe("parseAvantioProviderError", () => {
       validation_nodes_seen: 4,
       constraint_nodes_seen: 1,
       child_nodes_seen: 3,
+      validation_map_nodes_seen: 0,
+      validation_map_candidate_keys_seen: 0,
+      validation_map_string_leaves_seen: 0,
+      validation_map_string_array_leaves_seen: 0,
+      validation_map_rule_maps_seen: 0,
+      validation_map_nested_maps_seen: 0,
+      ignored_sensitive_keys_seen: 0,
+      ignored_unsupported_leaves_seen: 0,
+      details_object_count: 0,
+      details_array_count: 1,
+      details_string_count: 0,
       extracted_issue_count: 3,
     });
     expect(JSON.stringify(result.metadata)).not.toContain("arbitraryProviderKey");
     expect(JSON.stringify(result.metadata)).not.toContain("secretPayload");
+  });
+
+  it("parses direct field strings and JSON-pointer-style field keys", () => {
+    const issues = parseAvantioProviderError(JSON.stringify({ details: {
+      "location.address": "Address is required",
+      "/distribution/bathrooms/0/type": "Type is required",
+    } }));
+    expect(issues).toEqual([
+      expect.objectContaining({ code: "provider_validation_error", provider_path: "location.address", message: "Address is required" }),
+      expect.objectContaining({ code: "provider_validation_error", provider_path: "distribution.bathrooms[0].type", message: "Type is required" }),
+    ]);
+  });
+
+  it("returns one issue per safe string in a field message array", () => {
+    const issues = parseAvantioProviderError(JSON.stringify({ details: {
+      "distribution.bathrooms[0].type": ["type is required", "type is invalid"],
+    } }));
+    expect(issues.map((issue) => issue.message)).toEqual(["type is required", "type is invalid"]);
+    expect(issues.every((issue) => issue.provider_path === "distribution.bathrooms[0].type")).toBe(true);
+  });
+
+  it("parses the production field-to-string-array fixture with its summary", () => {
+    const result = parseAvantioProviderErrorWithMetadata(JSON.stringify(providerFieldMapArrayError));
+    expect(result.issues).toEqual([
+      expect.objectContaining({ code: "provider_validation_error", message: providerFieldMapArrayError.message, provider_path: null }),
+      expect.objectContaining({ code: "provider_validation_error", message: "type should not be empty", provider_path: "distribution.bathrooms[0].type" }),
+    ]);
+    expect(result.metadata).toMatchObject({
+      recognized_container_keys: ["error", "details", "message"],
+      validation_map_nodes_seen: 1,
+      validation_map_candidate_keys_seen: 1,
+      validation_map_string_leaves_seen: 1,
+      validation_map_string_array_leaves_seen: 1,
+      validation_map_rule_maps_seen: 0,
+      validation_map_nested_maps_seen: 0,
+      details_object_count: 1,
+      details_array_count: 0,
+      details_string_count: 0,
+      extracted_issue_count: 2,
+    });
+  });
+
+  it("builds the same path from a nested field map and numeric key", () => {
+    const result = parseAvantioProviderErrorWithMetadata(JSON.stringify(providerNestedFieldMapError));
+    expect(result.issues.at(-1)).toMatchObject({
+      code: "provider_validation_error",
+      provider_path: "distribution.bathrooms[0].type",
+      message: "type should not be empty",
+    });
+    expect(result.metadata).toMatchObject({
+      validation_map_nodes_seen: 4,
+      validation_map_candidate_keys_seen: 4,
+      validation_map_string_leaves_seen: 1,
+      validation_map_string_array_leaves_seen: 1,
+      validation_map_nested_maps_seen: 3,
+    });
+  });
+
+  it("classifies a field-to-rule map conservatively", () => {
+    const result = parseAvantioProviderErrorWithMetadata(JSON.stringify(providerFieldRuleMapError));
+    expect(result.issues).toEqual([
+      expect.objectContaining({ code: "provider_isdefined", provider_path: "distribution.bathrooms[0].type", message: "type is required" }),
+      expect.objectContaining({ code: "provider_isenum", provider_path: "distribution.bathrooms[0].type", message: "type must contain an allowed value" }),
+    ]);
+    expect(result.metadata).toMatchObject({ validation_map_rule_maps_seen: 1, validation_map_string_leaves_seen: 2 });
+  });
+
+  it("parses arrays containing separate field maps", () => {
+    const result = parseAvantioProviderErrorWithMetadata(JSON.stringify(providerFieldMapListError));
+    expect(result.issues.map((issue) => issue.provider_path)).toEqual(["location.address", "capacity.maxAdults"]);
+    expect(result.metadata).toMatchObject({
+      validation_map_nodes_seen: 2,
+      validation_map_candidate_keys_seen: 2,
+      validation_map_string_leaves_seen: 2,
+      validation_map_string_array_leaves_seen: 1,
+      details_array_count: 1,
+    });
+  });
+
+  it("treats ambiguous maps as nested fields with generic codes", () => {
+    expect(parseAvantioProviderError(JSON.stringify({ details: {
+      type: { requiredField: "Ambiguous validation" },
+    } }))).toEqual([
+      expect.objectContaining({ code: "provider_validation_error", provider_path: "type.requiredField", message: "Ambiguous validation" }),
+    ]);
+  });
+
+  it("never traverses denied or sensitive validation-map keys", () => {
+    const result = parseAvantioProviderErrorWithMetadata(JSON.stringify({ details: {
+      target: { wifiPassword: "super-secret-target" },
+      value: { apiKey: "super-secret-value" },
+      payload: { owner: "private owner data" },
+      authorization: "Bearer secret",
+      "data.location": "dotted-data-secret",
+      safeParent: { context: { location: "nested-secret" } },
+    } }));
+    const serialized = JSON.stringify(result);
+    for (const forbidden of ["super-secret-target", "super-secret-value", "private owner data", "Bearer secret", "dotted-data-secret", "nested-secret", "wifiPassword", "apiKey", "owner", "authorization", "data.location", "context"]) {
+      expect(serialized).not.toContain(forbidden);
+    }
+    expect(result.issues).toEqual([]);
+    expect(result.metadata.ignored_sensitive_keys_seen).toBe(6);
+  });
+
+  it("ignores sensitive, binary-looking, and malformed map leaves", () => {
+    const result = parseAvantioProviderErrorWithMetadata(JSON.stringify({ details: {
+      locationAddress: "api_key=never-return-this",
+      binaryValue: "a".repeat(200),
+      numericValue: 123,
+      booleanValue: true,
+      nullValue: null,
+    } }));
+    expect(result.issues).toEqual([]);
+    expect(result.metadata.ignored_unsupported_leaves_seen).toBe(5);
+  });
+
+  it("enforces depth and issue limits for validation maps", () => {
+    let deep: unknown = "Too deep";
+    for (let depth = 0; depth < 10; depth += 1) deep = { [`level${depth}`]: deep };
+    expect(parseAvantioProviderError(JSON.stringify({ details: deep }))).toEqual([]);
+
+    const many = Object.fromEntries(Array.from({ length: 30 }, (_, index) => [`field${index}`, `Issue ${index}`]));
+    expect(parseAvantioProviderError(JSON.stringify({ details: many }))).toHaveLength(AVANTIO_PROVIDER_ERROR_MAX_ISSUES);
+  });
+
+  it("counts a string-shaped details container without exposing it as a field map", () => {
+    const result = parseAvantioProviderErrorWithMetadata(JSON.stringify({ details: "Unsupported details text" }));
+    expect(result.issues).toEqual([]);
+    expect(result.metadata).toMatchObject({ details_object_count: 0, details_array_count: 0, details_string_count: 1 });
   });
 });
