@@ -219,6 +219,14 @@ describe("parseAvantioProviderError", () => {
       unsupported_leaf_array_count: 0,
       unsupported_leaf_object_count: 0,
       validation_map_invalid_path_keys_seen: 0,
+      invalid_path_contains_dot_numeric_segment: 0,
+      invalid_path_starts_with_dollar: 0,
+      invalid_path_contains_numeric_bracket: 0,
+      invalid_path_contains_quoted_bracket: 0,
+      invalid_path_contains_space: 0,
+      invalid_path_contains_colon: 0,
+      invalid_path_contains_wildcard: 0,
+      invalid_path_contains_parentheses: 0,
       safe_candidate_provider_paths: [],
       details_object_count: 0,
       details_array_count: 1,
@@ -237,6 +245,42 @@ describe("parseAvantioProviderError", () => {
     expect(issues).toEqual([
       expect.objectContaining({ code: "provider_validation_error", provider_path: "location.address", message: "Address is required" }),
       expect.objectContaining({ code: "provider_validation_error", provider_path: "distribution.bathrooms[0].type", message: "Type is required" }),
+    ]);
+  });
+
+  it("normalizes dotted numeric array segments while preserving existing path forms", () => {
+    const issues = parseAvantioProviderError(JSON.stringify({ details: {
+      "services.0.terms": "Terms are invalid",
+      "distribution.bathrooms.0.type": "Bathroom type is invalid",
+      "distribution.bedrooms.1.beds.0.type": "Bed type is invalid",
+      "foo[0].bar": "Bracket path is invalid",
+      "/foo/0/bar": "Pointer path is invalid",
+    } }));
+
+    expect(issues.map((issue) => issue.provider_path)).toEqual([
+      "services[0].terms",
+      "distribution.bathrooms[0].type",
+      "distribution.bedrooms[1].beds[0].type",
+      "foo[0].bar",
+      "foo[0].bar",
+    ]);
+  });
+
+  it("parses constraint descriptors beneath dotted numeric array paths", () => {
+    const issues = parseAvantioProviderError(JSON.stringify({ details: {
+      "services.0.terms.application.quantity": { min: 1 },
+      "distribution.bedrooms.1.beds.0.type": { in: ["DOUBLE", "SINGLE"] },
+    } }));
+
+    expect(issues).toEqual([
+      expect.objectContaining({
+        provider_path: "services[0].terms.application.quantity",
+        code: "provider_min",
+      }),
+      expect.objectContaining({
+        provider_path: "distribution.bedrooms[1].beds[0].type",
+        code: "provider_in",
+      }),
     ]);
   });
 
@@ -411,6 +455,36 @@ describe("parseAvantioProviderError", () => {
     });
     expect(result.metadata.safe_candidate_provider_paths).toEqual(["safeField"]);
     expect(result.metadata.safe_candidate_provider_paths).not.toContain("not a valid path");
+  });
+
+  it("reports only structural counters for invalid provider-path shapes", () => {
+    const invalidKeys = [
+      "bad.0.path with-space",
+      "$.private",
+      "field[0]:bad",
+      "field['private']",
+      "field.*",
+      "field(call)",
+    ];
+    const result = parseAvantioProviderErrorWithMetadata(JSON.stringify({
+      details: Object.fromEntries(invalidKeys.map((key) => [key, "private response value"])),
+    }));
+
+    expect(result.issues).toEqual([]);
+    expect(result.metadata).toMatchObject({
+      validation_map_invalid_path_keys_seen: 6,
+      invalid_path_contains_dot_numeric_segment: 1,
+      invalid_path_starts_with_dollar: 1,
+      invalid_path_contains_numeric_bracket: 1,
+      invalid_path_contains_quoted_bracket: 1,
+      invalid_path_contains_space: 1,
+      invalid_path_contains_colon: 1,
+      invalid_path_contains_wildcard: 1,
+      invalid_path_contains_parentheses: 1,
+    });
+    const serializedMetadata = JSON.stringify(result.metadata);
+    for (const key of invalidKeys) expect(serializedMetadata).not.toContain(key);
+    expect(serializedMetadata).not.toContain("private response value");
   });
 
   it("parses arrays containing separate field maps", () => {

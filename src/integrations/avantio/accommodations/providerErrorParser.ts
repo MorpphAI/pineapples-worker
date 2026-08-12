@@ -36,6 +36,14 @@ export type AvantioProviderErrorParserMetadata = {
   unsupported_leaf_array_count: number;
   unsupported_leaf_object_count: number;
   validation_map_invalid_path_keys_seen: number;
+  invalid_path_contains_dot_numeric_segment: number;
+  invalid_path_starts_with_dollar: number;
+  invalid_path_contains_numeric_bracket: number;
+  invalid_path_contains_quoted_bracket: number;
+  invalid_path_contains_space: number;
+  invalid_path_contains_colon: number;
+  invalid_path_contains_wildcard: number;
+  invalid_path_contains_parentheses: number;
   safe_candidate_provider_paths: string[];
   details_object_count: number;
   details_array_count: number;
@@ -143,8 +151,8 @@ function normalizeMapKeyPath(value: string): string | null {
     return segments.reduce<string | null>((path, segment) => path === null ? segment : appendPropertyPath(path, segment), null);
   }
 
-  return /^[A-Za-z_][A-Za-z0-9_-]*(?:\.[A-Za-z_][A-Za-z0-9_-]*|\[\d+\])*$/.test(normalized)
-    ? normalized
+  return /^[A-Za-z_][A-Za-z0-9_-]*(?:\.(?:[A-Za-z_][A-Za-z0-9_-]*|\d+)|\[\d+\])*$/.test(normalized)
+    ? normalized.replace(/\.(\d+)(?=\.|\[|$)/g, "[$1]")
     : null;
 }
 
@@ -256,6 +264,14 @@ function emptyMetadata(): AvantioProviderErrorParserMetadata {
     unsupported_leaf_array_count: 0,
     unsupported_leaf_object_count: 0,
     validation_map_invalid_path_keys_seen: 0,
+    invalid_path_contains_dot_numeric_segment: 0,
+    invalid_path_starts_with_dollar: 0,
+    invalid_path_contains_numeric_bracket: 0,
+    invalid_path_contains_quoted_bracket: 0,
+    invalid_path_contains_space: 0,
+    invalid_path_contains_colon: 0,
+    invalid_path_contains_wildcard: 0,
+    invalid_path_contains_parentheses: 0,
     safe_candidate_provider_paths: [],
     details_object_count: 0,
     details_array_count: 0,
@@ -298,6 +314,17 @@ export function parseAvantioProviderErrorWithMetadata(body: string): AvantioProv
     if (candidatePaths.size >= 20) return;
     candidatePaths.add(path);
     metadata.safe_candidate_provider_paths = [...candidatePaths];
+  };
+
+  const countInvalidPathShape = (key: string): void => {
+    if (/\.\d+(?=\.|$)/.test(key)) metadata.invalid_path_contains_dot_numeric_segment += 1;
+    if (/^\s*\$/.test(key)) metadata.invalid_path_starts_with_dollar += 1;
+    if (/\[\d+\]/.test(key)) metadata.invalid_path_contains_numeric_bracket += 1;
+    if (/\[(?:"[^"]*"|'[^']*')\]/.test(key)) metadata.invalid_path_contains_quoted_bracket += 1;
+    if (/\s/.test(key)) metadata.invalid_path_contains_space += 1;
+    if (/:/.test(key)) metadata.invalid_path_contains_colon += 1;
+    if (/\*/.test(key)) metadata.invalid_path_contains_wildcard += 1;
+    if (/[()]/.test(key)) metadata.invalid_path_contains_parentheses += 1;
   };
 
   const addIssue = (codeValue: unknown, messageValue: unknown, path: string | null): void => {
@@ -399,6 +426,7 @@ export function parseAvantioProviderErrorWithMetadata(body: string): AvantioProv
       const path = appendMapPath(parentPath, key);
       if (!path) {
         metadata.validation_map_invalid_path_keys_seen += 1;
+        countInvalidPathShape(key);
         continue;
       }
       addCandidatePath(path);
