@@ -9,10 +9,13 @@ import {
   parseAvantioProviderErrorWithMetadata,
 } from "../../src/integrations/avantio/accommodations";
 import {
+  providerConstraintDescriptorError,
   providerFieldMapArrayError,
   providerFieldMapListError,
   providerFieldRuleMapError,
   providerNestedFieldMapError,
+  providerKitchenApplianceConstraintError,
+  providerKitchenTypeConstraintError,
   providerValidationTreeError,
 } from "../fixtures/avantioAccommodationCreate";
 
@@ -206,8 +209,17 @@ describe("parseAvantioProviderError", () => {
       validation_map_string_array_leaves_seen: 0,
       validation_map_rule_maps_seen: 0,
       validation_map_nested_maps_seen: 0,
+      validation_map_constraint_descriptor_maps_seen: 0,
+      validation_map_constraint_descriptor_leaves_seen: 0,
       ignored_sensitive_keys_seen: 0,
       ignored_unsupported_leaves_seen: 0,
+      unsupported_leaf_null_count: 0,
+      unsupported_leaf_boolean_count: 0,
+      unsupported_leaf_number_count: 0,
+      unsupported_leaf_array_count: 0,
+      unsupported_leaf_object_count: 0,
+      validation_map_invalid_path_keys_seen: 0,
+      safe_candidate_provider_paths: [],
       details_object_count: 0,
       details_array_count: 1,
       details_string_count: 0,
@@ -282,6 +294,125 @@ describe("parseAvantioProviderError", () => {
     expect(result.metadata).toMatchObject({ validation_map_rule_maps_seen: 1, validation_map_string_leaves_seen: 2 });
   });
 
+  it("parses the six-leaf production constraint descriptor shape at the parent field path", () => {
+    const result = parseAvantioProviderErrorWithMetadata(JSON.stringify(providerConstraintDescriptorError));
+    const fieldIssues = result.issues.filter((issue) => issue.provider_path === "capacity.maxAdults");
+    expect(fieldIssues).toEqual([
+      expect.objectContaining({ code: "provider_min", message: "Valor mínimo permitido pela Avantio: 1." }),
+      expect.objectContaining({ code: "provider_max", message: "Valor máximo permitido pela Avantio: 20." }),
+      expect.objectContaining({ code: "provider_required", message: "Campo obrigatório para a Avantio." }),
+      expect.objectContaining({ code: "provider_integer", message: "A Avantio exige um número inteiro." }),
+      expect.objectContaining({ code: "provider_nullable", message: "A Avantio não aceita valor nulo neste campo." }),
+      expect.objectContaining({ code: "provider_invalid", message: "A Avantio rejeitou este campo pela restrição 'invalid'." }),
+    ]);
+    expect(fieldIssues.every((issue) => !/\.(?:min|max|required|integer|nullable|invalid)$/.test(issue.provider_path ?? ""))).toBe(true);
+    expect(result.metadata).toMatchObject({
+      recognized_container_keys: ["error", "details", "message"],
+      validation_map_nodes_seen: 2,
+      validation_map_candidate_keys_seen: 1,
+      validation_map_nested_maps_seen: 0,
+      validation_map_constraint_descriptor_maps_seen: 1,
+      validation_map_constraint_descriptor_leaves_seen: 6,
+      ignored_unsupported_leaves_seen: 0,
+      unsupported_leaf_boolean_count: 0,
+      unsupported_leaf_number_count: 0,
+      details_object_count: 1,
+      details_array_count: 0,
+      safe_candidate_provider_paths: ["capacity.maxAdults"],
+      extracted_issue_count: 7,
+    });
+  });
+
+  it("turns an in descriptor array into one issue without adding a rule path suffix", () => {
+    const result = parseAvantioProviderErrorWithMetadata(JSON.stringify(providerKitchenTypeConstraintError));
+    expect(result.issues).toEqual([{
+      code: "provider_in",
+      message: "Valores permitidos pela Avantio: AMERICAN, INDEPENDENT.",
+      canonical_path: null,
+      provider_path: "distribution.kitchens.type",
+      section: "provider",
+    }]);
+    expect(result.metadata).toMatchObject({
+      validation_map_constraint_descriptor_maps_seen: 1,
+      validation_map_constraint_descriptor_leaves_seen: 1,
+      validation_map_string_leaves_seen: 0,
+      validation_map_string_array_leaves_seen: 0,
+      safe_candidate_provider_paths: ["distribution.kitchens.type"],
+    });
+  });
+
+  it("emits one bounded provider_in issue for the kitchen appliance enum list", () => {
+    const issues = parseAvantioProviderError(JSON.stringify(providerKitchenApplianceConstraintError));
+    expect(issues).toHaveLength(1);
+    expect(issues[0]).toMatchObject({ code: "provider_in", provider_path: "distribution.kitchens.appliances" });
+    expect(issues[0].message).toContain("FRIDGE, FREEZER, OVEN");
+    expect(issues[0].message).toContain("ELECTRIC_KETTLE");
+  });
+
+  it("supports enum, isInt, and other normalized descriptor rule identifiers", () => {
+    const result = parseAvantioProviderError(JSON.stringify({ details: {
+      age: { isInt: true, minimum: 1, maximum: 120 },
+      mode: { enum: ["A", "B"] },
+    } }));
+    expect(result).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: "provider_isint", provider_path: "age" }),
+      expect.objectContaining({ code: "provider_minimum", provider_path: "age" }),
+      expect.objectContaining({ code: "provider_maximum", provider_path: "age" }),
+      expect.objectContaining({ code: "provider_enum", provider_path: "mode", message: "Valores permitidos pela Avantio: A, B." }),
+    ]));
+  });
+
+  it("ignores unknown descriptor scalars and denies submitted-value aliases", () => {
+    const privateValue = "private submitted value";
+    const result = parseAvantioProviderErrorWithMetadata(JSON.stringify({ details: {
+      someField: {
+        required: true,
+        unknownRule: 42,
+        value: privateValue,
+        actual: privateValue,
+        given: privateValue,
+        received: privateValue,
+        submitted: privateValue,
+        provided: privateValue,
+        payload: { privateValue },
+        token: "secret",
+      },
+    } }));
+    expect(result.issues).toEqual([expect.objectContaining({ code: "provider_required", provider_path: "someField" })]);
+    expect(JSON.stringify(result)).not.toContain(privateValue);
+    expect(result.metadata).toMatchObject({
+      ignored_sensitive_keys_seen: 8,
+      ignored_unsupported_leaves_seen: 1,
+      unsupported_leaf_number_count: 1,
+      safe_candidate_provider_paths: ["someField"],
+    });
+  });
+
+  it("counts unsupported leaf types and records only valid candidate provider paths", () => {
+    const result = parseAvantioProviderErrorWithMetadata(JSON.stringify({ details: {
+      safeField: {
+        required: true,
+        unknownNull: null,
+        unknownBoolean: true,
+        unknownNumber: 1,
+        unknownArray: [1, 2],
+        unknownObject: { nested: "ignored" },
+      },
+      "not a valid path": { hidden: true },
+    } }));
+    expect(result.issues).toEqual([expect.objectContaining({ code: "provider_required", provider_path: "safeField" })]);
+    expect(result.metadata).toMatchObject({
+      unsupported_leaf_null_count: 1,
+      unsupported_leaf_boolean_count: 1,
+      unsupported_leaf_number_count: 1,
+      unsupported_leaf_array_count: 1,
+      unsupported_leaf_object_count: 1,
+      validation_map_invalid_path_keys_seen: 1,
+    });
+    expect(result.metadata.safe_candidate_provider_paths).toEqual(["safeField"]);
+    expect(result.metadata.safe_candidate_provider_paths).not.toContain("not a valid path");
+  });
+
   it("parses arrays containing separate field maps", () => {
     const result = parseAvantioProviderErrorWithMetadata(JSON.stringify(providerFieldMapListError));
     expect(result.issues.map((issue) => issue.provider_path)).toEqual(["location.address", "capacity.maxAdults"]);
@@ -329,6 +460,11 @@ describe("parseAvantioProviderError", () => {
     } }));
     expect(result.issues).toEqual([]);
     expect(result.metadata.ignored_unsupported_leaves_seen).toBe(5);
+    expect(result.metadata).toMatchObject({
+      unsupported_leaf_null_count: 1,
+      unsupported_leaf_boolean_count: 1,
+      unsupported_leaf_number_count: 1,
+    });
   });
 
   it("enforces depth and issue limits for validation maps", () => {
@@ -338,6 +474,12 @@ describe("parseAvantioProviderError", () => {
 
     const many = Object.fromEntries(Array.from({ length: 30 }, (_, index) => [`field${index}`, `Issue ${index}`]));
     expect(parseAvantioProviderError(JSON.stringify({ details: many }))).toHaveLength(AVANTIO_PROVIDER_ERROR_MAX_ISSUES);
+
+    const candidates = parseAvantioProviderErrorWithMetadata(JSON.stringify({
+      details: Object.fromEntries(Array.from({ length: 30 }, (_, index) => [`field${index}`, null])),
+    }));
+    expect(candidates.metadata.safe_candidate_provider_paths).toHaveLength(20);
+    expect(candidates.metadata.safe_candidate_provider_paths).toEqual(Array.from({ length: 20 }, (_, index) => `field${index}`));
   });
 
   it("counts a string-shaped details container without exposing it as a field map", () => {

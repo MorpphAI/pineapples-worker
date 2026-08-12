@@ -26,8 +26,17 @@ export type AvantioProviderErrorParserMetadata = {
   validation_map_string_array_leaves_seen: number;
   validation_map_rule_maps_seen: number;
   validation_map_nested_maps_seen: number;
+  validation_map_constraint_descriptor_maps_seen: number;
+  validation_map_constraint_descriptor_leaves_seen: number;
   ignored_sensitive_keys_seen: number;
   ignored_unsupported_leaves_seen: number;
+  unsupported_leaf_null_count: number;
+  unsupported_leaf_boolean_count: number;
+  unsupported_leaf_number_count: number;
+  unsupported_leaf_array_count: number;
+  unsupported_leaf_object_count: number;
+  validation_map_invalid_path_keys_seen: number;
+  safe_candidate_provider_paths: string[];
   details_object_count: number;
   details_array_count: number;
   details_string_count: number;
@@ -46,7 +55,7 @@ const VALIDATION_MAP_CONTAINER_KEYS = new Set(["details", "errors", "validatione
 const VALIDATION_MAP_DENIED_KEYS = new Set([
   "target", "value", "request", "response", "body", "payload", "input", "data", "context", "metadata", "meta",
   "headers", "authorization", "cookie", "token", "apikey", "api_key", "secret", "password", "credential", "stack",
-  "trace", "cause",
+  "trace", "cause", "actual", "given", "received", "submitted", "provided",
 ]);
 const EXPLICIT_PATH_KEYS = ["field", "path", "parameter", "pointer"];
 const MESSAGE_KEYS = ["message", "detail", "description", "title", "error"];
@@ -153,15 +162,67 @@ function isDeniedMapKey(key: string): boolean {
 }
 
 function isRuleIdentifier(key: string): boolean {
-  return key.length <= 64 && (
-    /^is[A-Z][A-Za-z0-9]*$/.test(key)
-    || /^(?:min|max|minLength|maxLength|required|enum|pattern|format|invalid)$/.test(key)
-  );
+  return normalizedRuleIdentifier(key) !== null;
+}
+
+const RULE_IDENTIFIERS = new Set([
+  "in", "notin", "enum", "isenum", "required", "isdefined", "isnotempty", "min", "max", "minimum", "maximum",
+  "minlength", "maxlength", "length", "size", "minitems", "maxitems", "integer", "isint", "number",
+  "isnumber", "string", "isstring", "boolean", "isboolean", "nullable", "pattern", "format", "invalid",
+]);
+
+function normalizedRuleIdentifier(key: string): string | null {
+  if (key.length > 64) return null;
+  const normalized = key.replace(/[^A-Za-z0-9]/g, "").toLowerCase();
+  return RULE_IDENTIFIERS.has(normalized) ? normalized : null;
 }
 
 function isRuleMap(record: Record<string, unknown>): boolean {
   const entries = Object.entries(record);
-  return entries.length > 0 && entries.every(([key, value]) => typeof value === "string" && isRuleIdentifier(key));
+  return entries.length > 0 && entries.every(([key, value]) => typeof value === "string" && (
+    isRuleIdentifier(key) || (key.length <= 64 && /^is[A-Z][A-Za-z0-9]*$/.test(key))
+  ));
+}
+
+function isConstraintDescriptorMap(record: Record<string, unknown>, path: string | null): boolean {
+  if (!path) return false;
+  const safeEntries = Object.entries(record).filter(([key]) => !isDeniedMapKey(key));
+  return safeEntries.some(([key]) => isRuleIdentifier(key));
+}
+
+function safeConstraintPrimitive(value: unknown): string | null {
+  if (value === null) return "null";
+  if (typeof value === "boolean") return String(value);
+  if (typeof value === "number") return Number.isFinite(value) ? String(value) : null;
+  if (typeof value === "string") return normalizedText(value, 100);
+  return null;
+}
+
+function safeConstraintArray(value: unknown): string[] | null {
+  if (!Array.isArray(value) || value.length === 0) return null;
+  const safe: string[] = [];
+  for (const entry of value.slice(0, 20)) {
+    const normalized = safeConstraintPrimitive(entry);
+    if (normalized === null) return null;
+    safe.push(normalized);
+  }
+  return safe;
+}
+
+function constraintDescriptorMessage(rule: string, value: unknown): string {
+  const scalar = safeConstraintPrimitive(value);
+  const values = safeConstraintArray(value);
+  if ((rule === "in" || rule === "enum") && values) return `Valores permitidos pela Avantio: ${values.join(", ")}.`;
+  if ((rule === "min" || rule === "minimum") && typeof value === "number" && scalar) return `Valor mínimo permitido pela Avantio: ${scalar}.`;
+  if ((rule === "max" || rule === "maximum") && typeof value === "number" && scalar) return `Valor máximo permitido pela Avantio: ${scalar}.`;
+  if (rule === "minlength" && typeof value === "number" && scalar) return `Comprimento mínimo exigido pela Avantio: ${scalar}.`;
+  if (rule === "maxlength" && typeof value === "number" && scalar) return `Comprimento máximo permitido pela Avantio: ${scalar}.`;
+  if (["required", "isdefined", "isnotempty"].includes(rule) && value === true) return "Campo obrigatório para a Avantio.";
+  if (["integer", "isint"].includes(rule) && value === true) return "A Avantio exige um número inteiro.";
+  if (["string", "isstring"].includes(rule) && value === true) return "A Avantio exige um texto.";
+  if (["boolean", "isboolean"].includes(rule) && value === true) return "A Avantio exige um valor booleano.";
+  if (rule === "nullable" && value === false) return "A Avantio não aceita valor nulo neste campo.";
+  return `A Avantio rejeitou este campo pela restrição '${rule}'.`;
 }
 
 function normalizedMapMessage(value: unknown): string | null {
@@ -185,8 +246,17 @@ function emptyMetadata(): AvantioProviderErrorParserMetadata {
     validation_map_string_array_leaves_seen: 0,
     validation_map_rule_maps_seen: 0,
     validation_map_nested_maps_seen: 0,
+    validation_map_constraint_descriptor_maps_seen: 0,
+    validation_map_constraint_descriptor_leaves_seen: 0,
     ignored_sensitive_keys_seen: 0,
     ignored_unsupported_leaves_seen: 0,
+    unsupported_leaf_null_count: 0,
+    unsupported_leaf_boolean_count: 0,
+    unsupported_leaf_number_count: 0,
+    unsupported_leaf_array_count: 0,
+    unsupported_leaf_object_count: 0,
+    validation_map_invalid_path_keys_seen: 0,
+    safe_candidate_provider_paths: [],
     details_object_count: 0,
     details_array_count: 0,
     details_string_count: 0,
@@ -213,6 +283,22 @@ export function parseAvantioProviderErrorWithMetadata(body: string): AvantioProv
   const issues: AvantioProviderIssue[] = [];
   const seen = new Set<string>();
   const recognized = new Set<string>();
+  const candidatePaths = new Set<string>();
+
+  const countUnsupportedLeaf = (value: unknown): void => {
+    metadata.ignored_unsupported_leaves_seen += 1;
+    if (value === null) metadata.unsupported_leaf_null_count += 1;
+    else if (typeof value === "boolean") metadata.unsupported_leaf_boolean_count += 1;
+    else if (typeof value === "number") metadata.unsupported_leaf_number_count += 1;
+    else if (Array.isArray(value)) metadata.unsupported_leaf_array_count += 1;
+    else if (typeof value === "object") metadata.unsupported_leaf_object_count += 1;
+  };
+
+  const addCandidatePath = (path: string): void => {
+    if (candidatePaths.size >= 20) return;
+    candidatePaths.add(path);
+    metadata.safe_candidate_provider_paths = [...candidatePaths];
+  };
 
   const addIssue = (codeValue: unknown, messageValue: unknown, path: string | null): void => {
     if (issues.length >= AVANTIO_PROVIDER_ERROR_MAX_ISSUES) return;
@@ -229,7 +315,7 @@ export function parseAvantioProviderErrorWithMetadata(body: string): AvantioProv
     if (issues.length >= AVANTIO_PROVIDER_ERROR_MAX_ISSUES) return;
     const message = normalizedMapMessage(messageValue);
     if (!message) {
-      metadata.ignored_unsupported_leaves_seen += 1;
+      countUnsupportedLeaf(messageValue);
       return;
     }
     metadata.validation_map_string_leaves_seen += 1;
@@ -245,6 +331,11 @@ export function parseAvantioProviderErrorWithMetadata(body: string): AvantioProv
     if (Array.isArray(value)) {
       const hasStrings = value.some((entry) => typeof entry === "string");
       if (hasStrings && !fromStringArray) metadata.validation_map_string_array_leaves_seen += 1;
+      const containsOnlyNestedMaps = value.length > 0 && value.every((entry) => !!entry && typeof entry === "object" && !Array.isArray(entry));
+      if (!hasStrings && !containsOnlyNestedMaps) {
+        countUnsupportedLeaf(value);
+        return;
+      }
       for (const entry of value) {
         visitMapValue(entry, depth + (Array.isArray(entry) ? 1 : 0), path, hasStrings || fromStringArray);
         if (issues.length >= AVANTIO_PROVIDER_ERROR_MAX_ISSUES) break;
@@ -252,7 +343,7 @@ export function parseAvantioProviderErrorWithMetadata(body: string): AvantioProv
       return;
     }
     if (!value || typeof value !== "object") {
-      metadata.ignored_unsupported_leaves_seen += 1;
+      countUnsupportedLeaf(value);
       return;
     }
 
@@ -263,6 +354,32 @@ export function parseAvantioProviderErrorWithMetadata(body: string): AvantioProv
       for (const [rule, message] of Object.entries(record)) {
         addMapIssue(rule, message, path);
         if (issues.length >= AVANTIO_PROVIDER_ERROR_MAX_ISSUES) break;
+      }
+      return;
+    }
+    if (isConstraintDescriptorMap(record, path)) {
+      metadata.validation_map_nodes_seen += 1;
+      metadata.validation_map_constraint_descriptor_maps_seen += 1;
+      for (const [rawRule, descriptorValue] of Object.entries(record)) {
+        if (issues.length >= AVANTIO_PROVIDER_ERROR_MAX_ISSUES) break;
+        if (isDeniedMapKey(rawRule)) {
+          metadata.ignored_sensitive_keys_seen += 1;
+          continue;
+        }
+        const rule = normalizedRuleIdentifier(rawRule);
+        if (!rule) {
+          countUnsupportedLeaf(descriptorValue);
+          continue;
+        }
+        const safeValue = Array.isArray(descriptorValue)
+          ? safeConstraintArray(descriptorValue)
+          : safeConstraintPrimitive(descriptorValue);
+        if (safeValue === null) {
+          countUnsupportedLeaf(descriptorValue);
+          continue;
+        }
+        metadata.validation_map_constraint_descriptor_leaves_seen += 1;
+        addIssue(rule, constraintDescriptorMessage(rule, descriptorValue), path);
       }
       return;
     }
@@ -281,9 +398,10 @@ export function parseAvantioProviderErrorWithMetadata(body: string): AvantioProv
       metadata.validation_map_candidate_keys_seen += 1;
       const path = appendMapPath(parentPath, key);
       if (!path) {
-        metadata.ignored_unsupported_leaves_seen += 1;
+        metadata.validation_map_invalid_path_keys_seen += 1;
         continue;
       }
+      addCandidatePath(path);
       visitMapValue(child, depth, path);
     }
   };

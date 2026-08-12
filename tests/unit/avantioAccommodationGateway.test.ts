@@ -2,7 +2,7 @@ import { env as testEnv } from "cloudflare:test";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AvantioApiGateway } from "../../src/apiGateways/avantio/getAppointments";
 import { AvantioProviderError } from "../../src/integrations/avantio/accommodations";
-import { createSuccess, createSuccessMissingId, knownGoodCreatePayload, providerFieldMapArrayError, providerTemporaryError, providerValidationError, rawWithExternalReference } from "../fixtures/avantioAccommodationCreate";
+import { createSuccess, createSuccessMissingId, knownGoodCreatePayload, providerConstraintDescriptorError, providerFieldMapArrayError, providerTemporaryError, providerValidationError, rawWithExternalReference } from "../fixtures/avantioAccommodationCreate";
 
 const env = { AVANTIO_API_KEY: "provider-secret", AVANTIO_BASE_URL: "https://provider.test", AVANTIO_ACCOMMODATION_CREATE_ENABLED: "true", AVANTIO_ACCOMMODATION_INDEX_MAX_AGE_SECONDS: "900", API_KEY: "incoming-secret", DB: testEnv.DB };
 function response(body: unknown, status = 200, headers: Record<string, string> = {}) { return new Response(typeof body === "string" ? body : JSON.stringify(body), { status, headers: { "content-type": "application/json", ...headers } }); }
@@ -326,5 +326,34 @@ describe("AvantioApiGateway accommodation methods", () => {
     });
     expect(diagnostic.recognized_container_keys.every((key: string) => ["errors", "error", "validationErrors", "violations", "issues", "details", "children", "constraints", "message"].includes(key))).toBe(true);
     expect(logged).not.toContain("arbitraryProviderKey");
+  });
+
+  it("logs only safe constraint diagnostics without raw descriptor values or messages", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(response(providerConstraintDescriptorError, 400)));
+
+    await expect(new AvantioApiGateway(env).createAccommodation(knownGoodCreatePayload)).rejects.toBeInstanceOf(AvantioProviderError);
+
+    expect(errorSpy).toHaveBeenCalledTimes(1);
+    const logged = String(errorSpy.mock.calls[0][0]);
+    const diagnostic = JSON.parse(logged);
+    expect(diagnostic).toMatchObject({
+      validation_map_constraint_descriptor_maps_seen: 1,
+      validation_map_constraint_descriptor_leaves_seen: 6,
+      unsupported_leaf_null_count: 0,
+      unsupported_leaf_boolean_count: 0,
+      unsupported_leaf_number_count: 0,
+      unsupported_leaf_array_count: 0,
+      unsupported_leaf_object_count: 0,
+      validation_map_invalid_path_keys_seen: 0,
+      safe_candidate_provider_paths: ["capacity.maxAdults"],
+    });
+    expect(diagnostic.issue_codes).toEqual(expect.arrayContaining([
+      "provider_min", "provider_max", "provider_required", "provider_integer", "provider_nullable", "provider_invalid",
+    ]));
+    expect(logged).not.toContain(providerConstraintDescriptorError.message);
+    expect(logged).not.toContain("Valor mínimo permitido");
+    expect(logged).not.toContain('"min":1');
+    expect(logged).not.toContain('"max":20');
   });
 });

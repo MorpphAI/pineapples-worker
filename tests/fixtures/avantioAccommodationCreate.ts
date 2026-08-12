@@ -91,4 +91,35 @@ export const providerFieldMapListError = {
     { "capacity.maxAdults": "must be greater than zero" },
   ],
 };
+export const providerConstraintDescriptorError = {
+  error: "Bad Request",
+  message: "Some fields contain errors. See details for information about failed constraints.",
+  details: {
+    "capacity.maxAdults": {
+      min: 1,
+      max: 20,
+      required: true,
+      integer: true,
+      nullable: false,
+      invalid: true,
+    },
+  },
+};
+export const providerKitchenTypeConstraintError = {
+  details: {
+    "distribution.kitchens.type": {
+      in: ["AMERICAN", "INDEPENDENT"],
+    },
+  },
+};
+export const providerKitchenApplianceConstraintError = {
+  details: {
+    "distribution.kitchens.appliances": {
+      in: [
+        "FRIDGE", "FREEZER", "OVEN", "MICROWAVE", "FRYER", "TOASTER", "COFFEE_MACHINE", "TABLEWARE",
+        "KITCHEN_UTENSILS", "DISHWASHER", "WASHING_MACHINE", "DRYER", "JUICE_SQUEEZER", "ELECTRIC_KETTLE",
+      ],
+    },
+  },
+};
 export const providerTemporaryError = { message: "Temporarily unavailable" };
