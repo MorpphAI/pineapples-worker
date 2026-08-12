@@ -21,6 +21,22 @@ const kitchenAppliances = {
   "Máq. de secar": "DRYER",
   "Air fryer": "FRYER",
 } as const;
+const surroundingsDescriptions = {
+  of_recent_construction: "OF_RECENT_CONSTRUCTION",
+  modern: "MODERN",
+  totally_equipped: "TOTALLY_EQUIPPED",
+  new_furniture: "NEW_FURNITURE",
+  kitchen_totally_equipped: "KITCHEN_TOTALLY_EQUIPPED",
+  exterior: "EXTERIOR",
+  very_bright: "VERY_BRIGHT",
+  large: "LARGE",
+  ample: "AMPLE",
+  furnished_with_taste: "FURNISHED_WITH_TASTE",
+  cozy: "COZY",
+  sweet: "SWEET",
+  beautiful: "BEAUTIFUL",
+  comfortable: "COMFORTABLE",
+} as const;
 
 type AvantioKitchenType = typeof kitchenTypes[keyof typeof kitchenTypes];
 type AvantioKitchenAppliance = typeof kitchenAppliances[keyof typeof kitchenAppliances] | "FRIDGE" | "KITCHEN_UTENSILS";
@@ -42,6 +58,19 @@ function isBlankText(value: unknown): boolean {
 export function mapCanonicalToAvantioCreate(property: CanonicalPropertyV1): CreateMappingResult {
   const errors: ReadinessIssue[] = [];
   const warnings: ReadinessIssue[] = [];
+  const canonicalDescriptors = property.amenities.descriptors;
+  const mappedDescriptions = new Set(
+    canonicalDescriptors?.map((descriptor) => surroundingsDescriptions[descriptor]) ?? [],
+  );
+  if (mappedDescriptions.size === 0) {
+    errors.push(issue(
+      "surroundings_descriptions_required",
+      "Selecione ao menos uma característica descritiva do imóvel.",
+      "amenities.descriptors",
+      "surroundingsAndDistances.descriptions",
+      "amenities",
+    ));
+  }
   const required: Array<[unknown, string, string, string, string]> = [
     [property.identification.title, "title_required", "Informe o título da acomodação.", "identification.title", "name"],
     [property.identification.property_type, "property_type_required", "Informe o tipo do imóvel.", "identification.property_type", "type"],
@@ -179,7 +208,7 @@ export function mapCanonicalToAvantioCreate(property: CanonicalPropertyV1): Crea
       bathrooms: Array.from({ length: property.capacity.bathroom_count }, () => ({})),
     },
     externalReference: property.identification.code,
-    surroundingsAndDistances: { descriptions: [] as string[] },
+    surroundingsAndDistances: { descriptions: [...mappedDescriptions] },
     ...(property.capacity.area_sqm !== null ? { area: { livingSpace: { amount: property.capacity.area_sqm, unit: "m2" as const } } } : {}),
   };
   const parsed = AvantioAccommodationCreateRequestSchema.safeParse(payload);

@@ -15,6 +15,26 @@ function gateway(matches: any[] = [], createResult: any = { externalId: "created
 }
 
 describe("AvantioAccommodationService", () => {
+  it("blocks the confirmed empty-descriptions defect before lookup or POST", async () => {
+    const amenities = { ...productionCanonicalProperty.amenities } as Record<string, unknown>;
+    delete amenities.descriptors;
+    const incompleteProperty = CanonicalPropertyV1Schema.parse({ ...productionCanonicalProperty, amenities });
+    const fake = gateway([]);
+    const result = await new AvantioAccommodationService(enabledEnv, fake as any).create(incompleteProperty, 1);
+    expect(result).toMatchObject({
+      status: 422,
+      body: {
+        outcome: "not_ready",
+        errors: [expect.objectContaining({
+          code: "surroundings_descriptions_required",
+          provider_path: "surroundingsAndDistances.descriptions",
+        })],
+      },
+    });
+    expect(fake.findAccommodationsByExternalReference).not.toHaveBeenCalled();
+    expect(fake.createAccommodation).not.toHaveBeenCalled();
+  });
+
   it("returns found_existing without POST", async () => {
     const fake = gateway([candidate]); const result = await new AvantioAccommodationService(disabledEnv, fake as any).create(property, 1);
     expect(result).toMatchObject({ status: 200, body: { success: true, outcome: "found_existing", external_id: "existing" } }); expect(fake.createAccommodation).not.toHaveBeenCalled();

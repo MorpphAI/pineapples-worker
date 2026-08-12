@@ -12,6 +12,7 @@ export const productionCanonicalProperty = {
     beds: [{ position: 1, bed_type: "queen" as const, quantity: 1, is_suite: false, raw_label: null }],
   },
   kitchen: { ...canonicalProperty.kitchen, available: true, layout_type: "independent" as const, cooktop_type: "gas" as const, appliances: ["Cafeteira", "Micro-ondas", "Geladeira"] },
+  amenities: { ...canonicalProperty.amenities, descriptors: ["modern" as const] },
   services: { ...canonicalProperty.services, wifi: { available: true, speed: null }, elevator: false },
 };
 
@@ -21,7 +22,7 @@ export const knownGoodCreatePayload = {
   location: { door: "314", floor: "3", admin1: "RJ", number: "1241", resort: "Copacabana", address: "Avenida Exemplo", cityName: "Rio de Janeiro", postalCode: null, countryCode: "BR" },
   services: [{ type: "INTERNET_ACCESS" }],
   distribution: { bedrooms: [{ beds: [{ type: "QUEENSIZE", amount: 1 }], type: "BEDROOM", floor: 0 }], kitchens: { count: 1, type: "INDEPENDENT", cooktop: "GAS", appliances: ["COFFEE_MACHINE", "MICROWAVE", "FRIDGE"] }, bathrooms: [{}] },
-  externalReference: "NSC314", surroundingsAndDistances: { descriptions: [] },
+  externalReference: "NSC314", surroundingsAndDistances: { descriptions: ["MODERN"] },
 };
 
 export const createSuccess = { data: { id: "accommodation-123", status: "ENABLED" } };

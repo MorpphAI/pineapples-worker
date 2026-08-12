@@ -20,6 +20,7 @@ describe("Avantio accommodation contracts and mapping", () => {
     expect(parsed.capacity.max_children).toBeNull();
     expect(parsed.services.wifi.available).toBeNull();
     expect(parsed.kitchen.layout_type).toBeUndefined();
+    expect(parsed.amenities.descriptors).toBeUndefined();
   });
 
   it("maps the production-shaped apartment into a valid create request", () => {
@@ -35,6 +36,106 @@ describe("Avantio accommodation contracts and mapping", () => {
     expect(result.ready).toBe(true);
     expect(result.payload_hash).toMatch(/^[a-f0-9]{64}$/);
     expect(result.errors).toEqual([]);
+  });
+
+  it.each([
+    { descriptors: undefined, label: "missing" },
+    { descriptors: [] as string[], label: "empty" },
+  ])("blocks readiness when canonical surroundings descriptors are $label", async ({ descriptors }) => {
+    const amenities = { ...productionCanonicalProperty.amenities } as Record<string, unknown>;
+    if (descriptors === undefined) delete amenities.descriptors;
+    else amenities.descriptors = descriptors;
+    const property = CanonicalPropertyV1Schema.parse({ ...productionCanonicalProperty, amenities });
+    const result = await readiness(property);
+    expect(result.ready).toBe(false);
+    expect(result.payload).toBeNull();
+    expect(result.errors).toContainEqual({
+      code: "surroundings_descriptions_required",
+      message: "Selecione ao menos uma característica descritiva do imóvel.",
+      canonical_path: "amenities.descriptors",
+      provider_path: "surroundingsAndDistances.descriptions",
+      section: "amenities",
+    });
+  });
+
+  it.each([
+    ["of_recent_construction", "OF_RECENT_CONSTRUCTION"],
+    ["modern", "MODERN"],
+    ["totally_equipped", "TOTALLY_EQUIPPED"],
+    ["new_furniture", "NEW_FURNITURE"],
+    ["kitchen_totally_equipped", "KITCHEN_TOTALLY_EQUIPPED"],
+    ["exterior", "EXTERIOR"],
+    ["very_bright", "VERY_BRIGHT"],
+    ["large", "LARGE"],
+    ["ample", "AMPLE"],
+    ["furnished_with_taste", "FURNISHED_WITH_TASTE"],
+    ["cozy", "COZY"],
+    ["sweet", "SWEET"],
+    ["beautiful", "BEAUTIFUL"],
+    ["comfortable", "COMFORTABLE"],
+  ] as const)("maps canonical descriptor %s to %s", (canonicalDescriptor, providerDescriptor) => {
+    const property = CanonicalPropertyV1Schema.parse({
+      ...productionCanonicalProperty,
+      amenities: { ...productionCanonicalProperty.amenities, descriptors: [canonicalDescriptor] },
+    });
+    expect(mapCanonicalToAvantioCreate(property).payload?.surroundingsAndDistances.descriptions).toEqual([providerDescriptor]);
+  });
+
+  it("maps multiple canonical descriptors explicitly and in source order", () => {
+    const property = CanonicalPropertyV1Schema.parse({
+      ...productionCanonicalProperty,
+      amenities: {
+        ...productionCanonicalProperty.amenities,
+        descriptors: ["of_recent_construction", "totally_equipped", "kitchen_totally_equipped", "very_bright", "furnished_with_taste", "comfortable"],
+      },
+    });
+    expect(mapCanonicalToAvantioCreate(property).payload?.surroundingsAndDistances.descriptions).toEqual([
+      "OF_RECENT_CONSTRUCTION",
+      "TOTALLY_EQUIPPED",
+      "KITCHEN_TOTALLY_EQUIPPED",
+      "VERY_BRIGHT",
+      "FURNISHED_WITH_TASTE",
+      "COMFORTABLE",
+    ]);
+  });
+
+  it("deduplicates canonical surroundings descriptors before creating the provider payload", () => {
+    const property = CanonicalPropertyV1Schema.parse({
+      ...productionCanonicalProperty,
+      amenities: { ...productionCanonicalProperty.amenities, descriptors: ["modern", "beautiful", "modern", "beautiful"] },
+    });
+    expect(mapCanonicalToAvantioCreate(property).payload?.surroundingsAndDistances.descriptions).toEqual(["MODERN", "BEAUTIFUL"]);
+  });
+
+  it("rejects arbitrary canonical and provider surroundings descriptions", () => {
+    expect(CanonicalPropertyV1Schema.safeParse({
+      ...productionCanonicalProperty,
+      amenities: { ...productionCanonicalProperty.amenities, descriptors: ["luxurious"] },
+    }).success).toBe(false);
+
+    const invalidProviderPayload = structuredClone(knownGoodCreatePayload) as any;
+    invalidProviderPayload.surroundingsAndDistances.descriptions = ["luxurious"];
+    expect(AvantioAccommodationCreateRequestSchema.safeParse(invalidProviderPayload).success).toBe(false);
+  });
+
+  it("requires at least one provider surroundings description", () => {
+    const emptyDescriptions = structuredClone(knownGoodCreatePayload) as any;
+    emptyDescriptions.surroundingsAndDistances.descriptions = [];
+    expect(AvantioAccommodationCreateRequestSchema.safeParse(emptyDescriptions).success).toBe(false);
+  });
+
+  it("never derives surroundings descriptions from operational notes", async () => {
+    const amenities = { ...productionCanonicalProperty.amenities } as Record<string, unknown>;
+    delete amenities.descriptors;
+    const property = CanonicalPropertyV1Schema.parse({
+      ...productionCanonicalProperty,
+      amenities,
+      operational_notes: "MODERN, comfortable, beautiful",
+    });
+    const result = await readiness(property);
+    expect(result.ready).toBe(false);
+    expect(result.payload).toBeNull();
+    expect(result.errors).toContainEqual(expect.objectContaining({ code: "surroundings_descriptions_required" }));
   });
 
   it.each([
@@ -228,7 +329,7 @@ describe("Avantio accommodation contracts and mapping", () => {
   });
 
   it("hashes canonicalized payloads deterministically and preserves array order", async () => {
-    expect(await payloadHash(knownGoodCreatePayload)).toBe("8896037b2965e73721349a649776aff662ef424097b7e4aa57597a6a68ba4916");
+    expect(await payloadHash(knownGoodCreatePayload)).toBe("5607ed6b791a830ba2aeee8b7f0172468bd240842950af22dcf9d7058c27c4d1");
     expect(await payloadHash({ b: [2, 1], a: 1 })).toBe(await payloadHash({ a: 1, b: [2, 1] }));
     expect(await payloadHash({ a: [1, 2] })).not.toBe(await payloadHash({ a: [2, 1] }));
   });

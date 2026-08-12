@@ -20,6 +20,22 @@ export const AvantioKitchenApplianceSchema = z.enum([
   "JUICE_SQUEEZER",
   "ELECTRIC_KETTLE",
 ]);
+export const AvantioSurroundingsDescriptionSchema = z.enum([
+  "OF_RECENT_CONSTRUCTION",
+  "MODERN",
+  "TOTALLY_EQUIPPED",
+  "NEW_FURNITURE",
+  "KITCHEN_TOTALLY_EQUIPPED",
+  "EXTERIOR",
+  "VERY_BRIGHT",
+  "LARGE",
+  "AMPLE",
+  "FURNISHED_WITH_TASTE",
+  "COZY",
+  "SWEET",
+  "BEAUTIFUL",
+  "COMFORTABLE",
+]);
 
 const CoordinatesSchema = z.object({ lat: z.string().min(1), lon: z.string().min(1) }).strict();
 const BedSchema = z.object({ type: AvantioBedTypeSchema, amount: z.number().int().positive() }).strict();
@@ -45,7 +61,7 @@ export const AvantioAccommodationCreateRequestSchema = z.object({
   services: z.array(z.object({ type: z.literal("INTERNET_ACCESS") }).strict()).optional(),
   distribution: z.object({ bedrooms: z.array(BedroomSchema).min(1), kitchens: KitchenSchema.optional(), bathrooms: z.array(z.object({}).strict()) }).strict(),
   externalReference: z.string().trim().min(1),
-  surroundingsAndDistances: z.object({ descriptions: z.array(z.string()) }).strict(),
+  surroundingsAndDistances: z.object({ descriptions: z.array(AvantioSurroundingsDescriptionSchema).min(1) }).strict(),
   area: z.object({ livingSpace: z.object({ amount: z.number().finite().nonnegative(), unit: z.literal("m2") }).strict() }).strict().optional(),
 }).strict();
 
