@@ -17,12 +17,44 @@ export const productionCanonicalProperty = {
 };
 
 export const knownGoodCreatePayload = {
-  name: "NSC314", type: "APARTMENT", status: "ENABLED", purpose: "RENTAL", capacity: { min: 1, maxAdults: 2 },
+  name: "NSC314", type: "APARTMENT", status: "DISABLED", purpose: "RENTAL", pricingModel: "SEASONAL_RATES", capacity: { min: 1, maxAdults: 2 },
   features: { accessibility: { elevator: false } },
-  location: { door: "314", floor: "3", admin1: "RJ", number: "1241", resort: "Copacabana", address: "Avenida Exemplo", cityName: "Rio de Janeiro", postalCode: null, countryCode: "BR" },
-  services: [{ type: "INTERNET_ACCESS" }],
-  distribution: { bedrooms: [{ beds: [{ type: "QUEENSIZE", amount: 1 }], type: "BEDROOM", floor: 0 }], kitchens: { count: 1, type: "INDEPENDENT", cooktop: "GAS", appliances: ["COFFEE_MACHINE", "MICROWAVE", "FRIDGE"] }, bathrooms: [{}] },
+  location: { addrType: "STREET", door: "314", floor: "3", admin1: "RJ", number: "1241", resort: "Copacabana", address: "Avenida Exemplo", cityName: "Rio de Janeiro", countryCode: "BR" },
+  registryData: { legalEntityId: null, managedBy: "PRIVATE", registerReference: "NSC314" },
+  services: [
+    { type: "INTERNET_ACCESS", accessType: "WIFI", available: true, displayMode: "VISIBLE_INCLUDED", terms: { additionalPrice: { amount: 0, currency: "BRL", paymentType: "INCLUDED" }, application: { rule: "MANDATORY_ALWAYS", comparison: { type: "GREATER", value: 0 }, quantity: 0 } } },
+    { type: "FINAL_CLEAN", available: true, displayMode: "VISIBLE_ITEMIZED", terms: { additionalPrice: { amount: 0, currency: "BRL", paymentType: "INCLUDED" }, application: { rule: "MANDATORY_ALWAYS", comparison: { type: "GREATER", value: 0 }, quantity: 0 } } },
+  ],
+  distribution: { bedrooms: [{ beds: [{ type: "QUEENSIZE", amount: 1 }], type: "BEDROOM", floor: 0 }], kitchens: { count: 1, type: "INDEPENDENT", cooktop: "GAS", appliances: ["COFFEE_MACHINE", "MICROWAVE", "FRIDGE"] }, bathrooms: [{ count: 1, type: "WITH_SHOWER" }] },
   externalReference: "NSC314", surroundingsAndDistances: { descriptions: ["MODERN"] },
+};
+
+export const n8nReferenceCanonicalProperty = {
+  ...productionCanonicalProperty,
+  identification: { ...productionCanonicalProperty.identification, code: "PARITY-AVANTIO-01" },
+  address: {
+    ...productionCanonicalProperty.address,
+    postal_code: "22.050-002",
+    coordinates: { latitude: -22.9711, longitude: -43.1822 },
+  },
+  capacity: { ...productionCanonicalProperty.capacity, max_adults: 4, max_children: 2, bathroom_count: 2 },
+  kitchen: { ...productionCanonicalProperty.kitchen, appliances: ["Geladeira", "Micro-ondas", "Cafeteira"] },
+  services: {
+    ...productionCanonicalProperty.services,
+    air_conditioning: { available: true, areas: "Todos os ambientes" },
+    wifi: { available: true, speed: null },
+    pets: { allowed: false, notes: null },
+    water_heating: "electric" as const,
+    elevator: true,
+  },
+  amenities: {
+    ...productionCanonicalProperty.amenities,
+    bedroom: ["Ferro de passar", "Tábua de passar", "Smart TV", "Blackout", "Cabide", "Travesseiro"],
+    living_room: ["Ventilador", "Mesa de jantar", "TV a cabo", "Cortina"],
+    bathroom: ["Secador de cabelo", "Ducha higiênica"],
+    general: ["Fechadura eletrônica", "Protetor de colchão", "Manta", "Talher inox", "Jogo americano"],
+    descriptors: ["modern" as const],
+  },
 };
 
 export const createSuccess = { data: { id: "accommodation-123", status: "ENABLED" } };

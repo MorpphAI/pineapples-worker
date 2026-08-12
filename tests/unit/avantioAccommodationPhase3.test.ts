@@ -306,15 +306,18 @@ describe("Avantio accommodation contracts and mapping", () => {
     expect(result.errors).toContainEqual(expect.objectContaining({ code, canonical_path: expect.any(String), provider_path: expect.any(String) }));
   });
 
-  it("defers sofa-bed mapping without emitting an extra provider bedroom", async () => {
+  it("maps an explicit sofa-bed type into one additional bedroom entry", async () => {
     const property = CanonicalPropertyV1Schema.parse({
       ...productionCanonicalProperty,
       capacity: { ...productionCanonicalProperty.capacity, sofa_bed: { available: true, bed_type: "double", raw_label: "sofa bed" } },
     });
     const result = await readiness(property);
     expect(result.ready).toBe(true);
-    expect(result.payload?.distribution.bedrooms).toEqual(knownGoodCreatePayload.distribution.bedrooms);
-    expect(result.warnings).toContainEqual(expect.objectContaining({ code: "sofa_bed_provider_mapping_deferred", canonical_path: "capacity.sofa_bed", provider_path: "distribution.bedrooms" }));
+    expect(result.payload?.distribution.bedrooms).toEqual([
+      ...knownGoodCreatePayload.distribution.bedrooms,
+      { beds: [{ type: "DOUBLE", amount: 1 }], type: "BEDROOM", floor: 0 },
+    ]);
+    expect(result.warnings).not.toContainEqual(expect.objectContaining({ code: "sofa_bed_provider_mapping_deferred" }));
   });
 
   it("reports unsupported property and bed mappings explicitly", () => {
@@ -329,7 +332,7 @@ describe("Avantio accommodation contracts and mapping", () => {
   });
 
   it("hashes canonicalized payloads deterministically and preserves array order", async () => {
-    expect(await payloadHash(knownGoodCreatePayload)).toBe("5607ed6b791a830ba2aeee8b7f0172468bd240842950af22dcf9d7058c27c4d1");
+    expect(await payloadHash(knownGoodCreatePayload)).toBe("04a0a43375a8b276d3c34932403249e5b425f5173b01c987cd9aef62466242a6");
     expect(await payloadHash({ b: [2, 1], a: 1 })).toBe(await payloadHash({ a: 1, b: [2, 1] }));
     expect(await payloadHash({ a: [1, 2] })).not.toBe(await payloadHash({ a: [2, 1] }));
   });

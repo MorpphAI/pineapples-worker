@@ -37,6 +37,46 @@ const surroundingsDescriptions = {
   beautiful: "BEAUTIFUL",
   comfortable: "COMFORTABLE",
 } as const;
+const bathroomHeaters = { gas: "BOILER", electric: "ELECTRIC", solar: "SOLAR" } as const;
+const featureLabels = {
+  "Ferro de passar": "iron",
+  "Tábua de passar": "ironingBoard",
+  "Secador de cabelo": "hairDryer",
+  "Ventilador": "hasFan",
+  "Mesa de jantar": "diningTable",
+  "Blackout": "blackout",
+  "Cortina": "curtains",
+  "Cabide": "hangers",
+  "Fechadura eletrônica": "electronicLock",
+  "Ducha higiênica": "bidet",
+  "Protetor de colchão": "mattressProtector",
+  "Manta": "blanket",
+  "Travesseiro": "pillow",
+  "Talheres inox": "cutlery",
+  "Talher inox": "cutlery",
+  "Jogo americano": "dinnerware",
+} as const;
+const airConditioningAreas = {
+  "Todos os ambientes": "YES_ALL_THE_ACCOMMODATION",
+  "Somente quartos": "YES_ONLY_IN_BEDROOMS",
+  "Somente sala": "YES_ONLY_LOUNGE_ROOM",
+  "Sala e alguns quartos": "YES_IN_THE_LIVING_ROOM_AND_IN_SOME_BEDROOMS",
+} as const;
+const SERVICE_TERMS = {
+  additionalPrice: { amount: 0 as const, currency: "BRL" as const, paymentType: "INCLUDED" as const },
+  application: {
+    rule: "MANDATORY_ALWAYS" as const,
+    comparison: { type: "GREATER" as const, value: 0 as const },
+    quantity: 0 as const,
+  },
+};
+
+function serviceTerms() {
+  return {
+    additionalPrice: { ...SERVICE_TERMS.additionalPrice },
+    application: { ...SERVICE_TERMS.application, comparison: { ...SERVICE_TERMS.application.comparison } },
+  };
+}
 
 type AvantioKitchenType = typeof kitchenTypes[keyof typeof kitchenTypes];
 type AvantioKitchenAppliance = typeof kitchenAppliances[keyof typeof kitchenAppliances] | "FRIDGE" | "KITCHEN_UTENSILS";
@@ -69,6 +109,18 @@ export function mapCanonicalToAvantioCreate(property: CanonicalPropertyV1): Crea
       "amenities.descriptors",
       "surroundingsAndDistances.descriptions",
       "amenities",
+    ));
+  }
+  const mappedAirConditioningType = property.services.air_conditioning.areas
+    ? airConditioningAreas[property.services.air_conditioning.areas as keyof typeof airConditioningAreas]
+    : undefined;
+  if (property.services.air_conditioning.available === true && !mappedAirConditioningType) {
+    errors.push(issue(
+      "air_conditioning_areas_required",
+      "Informe em quais ambientes o ar-condicionado está disponível.",
+      "services.air_conditioning.areas",
+      "services[].airConditionedType",
+      "services",
     ));
   }
   const required: Array<[unknown, string, string, string, string]> = [
@@ -114,13 +166,20 @@ export function mapCanonicalToAvantioCreate(property: CanonicalPropertyV1): Crea
       errors.push(issue("unsupported_provider_mapping", "Tipo de cama sem mapeamento Avantio suportado.", `capacity.beds[${bed.position - 1}].bed_type`, "distribution.bedrooms[].beds[].type", "capacity"));
       continue;
     }
-    if (bed.bed_type !== "queen") warnings.push(migrationWarning(`capacity.beds[${bed.position - 1}].bed_type`, "distribution.bedrooms[].beds[].type"));
     const group = bedrooms.get(bed.position) ?? [];
     group.push({ type: mapped, amount: bed.quantity });
     bedrooms.set(bed.position, group);
   }
   if (property.capacity.sofa_bed.available === true) {
-    warnings.push(issue("sofa_bed_provider_mapping_deferred", "O sofá-cama foi preservado apenas no contrato canônico até que o mapeamento do provedor seja verificado.", "capacity.sofa_bed", "distribution.bedrooms", "capacity"));
+    const sofaBedType = property.capacity.sofa_bed.bed_type
+      ? bedTypes[property.capacity.sofa_bed.bed_type]
+      : undefined;
+    if (sofaBedType) {
+      const nextPosition = Math.max(0, ...bedrooms.keys()) + 1;
+      bedrooms.set(nextPosition, [{ type: sofaBedType, amount: 1 }]);
+    } else {
+      warnings.push(issue("sofa_bed_provider_mapping_deferred", "O sofá-cama foi preservado apenas no contrato canônico até que o tipo possa ser mapeado.", "capacity.sofa_bed", "distribution.bedrooms", "capacity"));
+    }
   }
   if (bedrooms.size === 0) errors.push(issue("bedrooms_required", "Informe ao menos uma cama com tipo conhecido.", "capacity.beds", "distribution.bedrooms", "capacity"));
 
@@ -178,6 +237,50 @@ export function mapCanonicalToAvantioCreate(property: CanonicalPropertyV1): Crea
     if (kitchen && mappedAppliances.size > 0) kitchen.appliances = [...mappedAppliances];
   }
 
+  const amenityLabels = new Set([
+    ...property.amenities.bedroom,
+    ...property.amenities.living_room,
+    ...property.amenities.bathroom,
+    ...property.amenities.general,
+  ]);
+  const features: Record<string, unknown> = {};
+  if (property.services.elevator !== null) features.accessibility = { elevator: property.services.elevator };
+  for (const [label, providerFeature] of Object.entries(featureLabels)) {
+    if (amenityLabels.has(label)) features[providerFeature] = true;
+  }
+  const hasSmartTv = amenityLabels.has("Smart TV");
+  const hasCableTv = amenityLabels.has("TV a cabo");
+  if (hasSmartTv || hasCableTv) {
+    features.tvConfiguration = {
+      ...(hasSmartTv ? { hasSmartTv: true } : {}),
+      ...(hasCableTv ? { hasCableTv: true } : {}),
+    };
+  }
+
+  const services: unknown[] = [];
+  if (mappedAirConditioningType) {
+    services.push({
+      type: "AIR_CONDITIONED",
+      airConditionedType: mappedAirConditioningType,
+      available: true,
+      displayMode: "VISIBLE_INCLUDED",
+      terms: serviceTerms(),
+    });
+  }
+  if (property.services.wifi.available === true) {
+    services.push({ type: "INTERNET_ACCESS", accessType: "WIFI", available: true, displayMode: "VISIBLE_INCLUDED", terms: serviceTerms() });
+  }
+  if (property.services.pets.allowed !== null) {
+    services.push({ type: "PETS_ALLOWED", available: property.services.pets.allowed, displayMode: "VISIBLE_INCLUDED", terms: serviceTerms() });
+  }
+  services.push({ type: "FINAL_CLEAN", available: true, displayMode: "VISIBLE_ITEMIZED", terms: serviceTerms() });
+
+  const postalCodeDigits = property.address.postal_code?.replace(/\D/g, "") ?? "";
+  const postalCode = postalCodeDigits.length === 8 ? postalCodeDigits : undefined;
+  const heater = property.services.water_heating && property.services.water_heating !== "none"
+    ? bathroomHeaters[property.services.water_heating]
+    : undefined;
+
   if (errors.length > 0 || !providerPropertyType || property.identification.title === null || property.capacity.max_adults === null || property.capacity.bathroom_count === null || property.address.street === null || property.address.number === null || property.address.city === null || property.address.state === null || property.address.country === null) {
     return { payload: null, errors, warnings };
   }
@@ -185,11 +288,13 @@ export function mapCanonicalToAvantioCreate(property: CanonicalPropertyV1): Crea
   const payload = {
     name: property.identification.title,
     type: providerPropertyType,
-    status: "ENABLED",
+    status: "DISABLED",
     purpose: "RENTAL",
+    pricingModel: "SEASONAL_RATES",
     capacity: { min: 1, maxAdults: property.capacity.max_adults, ...(property.capacity.max_children !== null ? { maxChildren: property.capacity.max_children } : {}) },
-    ...(property.services.elevator !== null ? { features: { accessibility: { elevator: property.services.elevator } } } : {}),
+    ...(Object.keys(features).length > 0 ? { features } : {}),
     location: {
+      addrType: "STREET",
       ...(property.address.unit !== null ? { door: property.address.unit } : {}),
       ...(property.address.floor !== null ? { floor: property.address.floor } : {}),
       admin1: property.address.state,
@@ -197,15 +302,16 @@ export function mapCanonicalToAvantioCreate(property: CanonicalPropertyV1): Crea
       ...(property.address.neighborhood !== null ? { resort: property.address.neighborhood } : {}),
       address: property.address.street,
       cityName: property.address.city,
-      postalCode: property.address.postal_code,
+      ...(postalCode ? { postalCode } : {}),
       countryCode: property.address.country,
       ...(coordinates ? { coordinates } : {}),
     },
-    ...(property.services.wifi.available === true ? { services: [{ type: "INTERNET_ACCESS" as const }] } : {}),
+    registryData: { legalEntityId: null, managedBy: "PRIVATE", registerReference: property.identification.code },
+    services,
     distribution: {
       bedrooms: [...bedrooms.entries()].sort(([a], [b]) => a - b).map(([, beds]) => ({ beds, type: "BEDROOM" as const, floor: 0 })),
       ...(kitchen ? { kitchens: kitchen } : {}),
-      bathrooms: Array.from({ length: property.capacity.bathroom_count }, () => ({})),
+      bathrooms: [{ count: property.capacity.bathroom_count, type: "WITH_SHOWER", ...(heater ? { heater } : {}) }],
     },
     externalReference: property.identification.code,
     surroundingsAndDistances: { descriptions: [...mappedDescriptions] },
