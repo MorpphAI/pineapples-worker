@@ -8,6 +8,7 @@ import {
 import {
   knownGoodCreatePayload,
   n8nReferenceCanonicalProperty,
+  n8nReferencePetsService,
   productionCanonicalProperty,
 } from "../fixtures/avantioAccommodationCreate";
 
@@ -78,7 +79,7 @@ describe("Avantio create mapper n8n reference parity", () => {
     expect(mapped.payload?.services).toEqual(expect.arrayContaining([
       expect.objectContaining({ type: "AIR_CONDITIONED", airConditionedType: "YES_ALL_THE_ACCOMMODATION", available: true, displayMode: "VISIBLE_INCLUDED" }),
       expect.objectContaining({ type: "INTERNET_ACCESS", accessType: "WIFI", available: true, displayMode: "VISIBLE_INCLUDED" }),
-      expect.objectContaining({ type: "PETS_ALLOWED", available: false, displayMode: "VISIBLE_INCLUDED" }),
+      expect.objectContaining(n8nReferencePetsService),
       expect.objectContaining({ type: "FINAL_CLEAN", available: true, displayMode: "VISIBLE_ITEMIZED" }),
     ]));
     for (const service of mapped.payload?.services ?? []) {
@@ -88,9 +89,47 @@ describe("Avantio create mapper n8n reference parity", () => {
       });
     }
     const pets = mapped.payload?.services.find((service) => service.type === "PETS_ALLOWED");
-    expect(pets).not.toHaveProperty("maxWeight");
-    expect(pets).not.toHaveProperty("dangerousAllowed");
+    expect(pets).toMatchObject(n8nReferencePetsService);
     expect(JSON.stringify(mapped.payload)).not.toMatch(/password|network/i);
+  });
+
+  it.each([false, true])("always emits the PETS_ALLOWED policy when canonical pets is %s", (allowed) => {
+    const candidate = CanonicalPropertyV1Schema.parse({
+      ...productionCanonicalProperty,
+      services: { ...productionCanonicalProperty.services, pets: { allowed, notes: null } },
+    });
+    const services = mapCanonicalToAvantioCreate(candidate).payload?.services;
+    const pets = services?.find((service) => service.type === "PETS_ALLOWED");
+
+    expect(pets).toMatchObject({
+      type: "PETS_ALLOWED",
+      available: allowed,
+      displayMode: "VISIBLE_INCLUDED",
+      dangerousAllowed: false,
+      maxWeight: 10,
+    });
+    expect(services?.find((service) => service.type === "INTERNET_ACCESS")).toMatchObject({
+      type: "INTERNET_ACCESS",
+      accessType: "WIFI",
+      available: true,
+      displayMode: "VISIBLE_INCLUDED",
+    });
+    expect(services?.find((service) => service.type === "FINAL_CLEAN")).toMatchObject({
+      type: "FINAL_CLEAN",
+      available: true,
+      displayMode: "VISIBLE_ITEMIZED",
+    });
+    expect(JSON.stringify(services)).not.toMatch(/password|network/i);
+  });
+
+  it("accepts non-negative PETS_ALLOWED maxWeight and rejects negative values", () => {
+    const zeroWeight = structuredClone(mapped.payload) as any;
+    zeroWeight.services.find((service: any) => service.type === "PETS_ALLOWED").maxWeight = 0;
+    expect(AvantioAccommodationCreateRequestSchema.safeParse(zeroWeight).success).toBe(true);
+
+    const negativeWeight = structuredClone(mapped.payload) as any;
+    negativeWeight.services.find((service: any) => service.type === "PETS_ALLOWED").maxWeight = -1;
+    expect(AvantioAccommodationCreateRequestSchema.safeParse(negativeWeight).success).toBe(false);
   });
 
   it.each([

@@ -75,7 +75,7 @@ const AirConditionedServiceSchema = z.object({
 }).strict();
 const PetsServiceSchema = z.object({
   type: z.literal("PETS_ALLOWED"), available: z.boolean(), displayMode: z.literal("VISIBLE_INCLUDED"),
-  dangerousAllowed: z.boolean().optional(), maxWeight: z.number().positive().optional(), terms: ServiceTermsSchema,
+  dangerousAllowed: z.boolean(), maxWeight: z.number().min(0), terms: ServiceTermsSchema,
 }).strict();
 const FinalCleanServiceSchema = z.object({
   type: z.literal("FINAL_CLEAN"), available: z.literal(true), displayMode: z.literal("VISIBLE_ITEMIZED"), terms: ServiceTermsSchema,

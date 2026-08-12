@@ -271,7 +271,14 @@ export function mapCanonicalToAvantioCreate(property: CanonicalPropertyV1): Crea
     services.push({ type: "INTERNET_ACCESS", accessType: "WIFI", available: true, displayMode: "VISIBLE_INCLUDED", terms: serviceTerms() });
   }
   if (property.services.pets.allowed !== null) {
-    services.push({ type: "PETS_ALLOWED", available: property.services.pets.allowed, displayMode: "VISIBLE_INCLUDED", terms: serviceTerms() });
+    services.push({
+      type: "PETS_ALLOWED",
+      available: property.services.pets.allowed,
+      displayMode: "VISIBLE_INCLUDED",
+      dangerousAllowed: false,
+      maxWeight: 10,
+      terms: serviceTerms(),
+    });
   }
   services.push({ type: "FINAL_CLEAN", available: true, displayMode: "VISIBLE_ITEMIZED", terms: serviceTerms() });
 

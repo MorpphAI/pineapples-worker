@@ -57,6 +57,14 @@ export const n8nReferenceCanonicalProperty = {
   },
 };
 
+export const n8nReferencePetsService = {
+  type: "PETS_ALLOWED",
+  available: false,
+  displayMode: "VISIBLE_INCLUDED",
+  dangerousAllowed: false,
+  maxWeight: 10,
+};
+
 export const createSuccess = { data: { id: "accommodation-123", status: "ENABLED" } };
 export const createSuccessMissingId = { data: { status: "ENABLED" } };
 export const rawWithExternalReference = { id: "accommodation-123", name: "NSC314", status: "ENABLED", externalReference: "NSC314", galleryId: "gallery", location: {} };
