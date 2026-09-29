@@ -3,6 +3,7 @@ import { Context } from "hono";
 import { z } from "zod";
 import { CangeAuthorizationDecisionService } from "../../../../services/v1/cange/cangeAuthorizationDecisionService";
 import { Env } from "../../../../types/configTypes";
+import { AvantioProviderError } from "../../../../integrations/avantio/accommodations/providerErrors";
 
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -40,6 +41,12 @@ export class CangeAuthorizationDecisions extends OpenAPIRoute {
       "400": {
         description: "Invalid date",
       },
+      "502": {
+        description: "Avantio rejected the request or returned an invalid response",
+      },
+      "503": {
+        description: "Avantio temporarily unavailable after retries",
+      },
     },
   };
 
@@ -61,10 +68,35 @@ export class CangeAuthorizationDecisions extends OpenAPIRoute {
       const result = await service.getDecisions(date);
       return c.json(result);
     } catch (error: unknown) {
+      if (error instanceof AvantioProviderError) {
+        const retryable = error.kind === "temporarily_unavailable";
+        console.error("[CangeAuthorizationDecisions]", {
+          event: "authorization_decision_provider_error",
+          errorCode: error.code,
+          errorKind: error.kind,
+          providerStatus: error.status,
+          providerRequestId: safeDiagnosticId(error.providerRequestId),
+          stage: error.stage,
+          retryable,
+          date,
+        });
+
+        return c.json({
+          success: false,
+          mode: "decision_only",
+          date,
+          error: retryable ? "avantio_temporarily_unavailable" : "avantio_provider_error",
+          errorCode: error.code,
+          retryable,
+          providerStatus: error.status,
+        }, retryable ? 503 : 502);
+      }
+
       console.error("[CangeAuthorizationDecisions]", {
         event: "authorization_decision_runtime_error",
         errorCode: "authorization_decision_runtime_error",
         errorName: error instanceof Error ? error.name : "UnknownError",
+        date,
       });
       return c.json({
         success: false,
@@ -72,6 +104,7 @@ export class CangeAuthorizationDecisions extends OpenAPIRoute {
         date,
         error: "failed_to_build_authorization_decisions",
         errorCode: "authorization_decision_runtime_error",
+        retryable: false,
       }, 500);
     }
   }
@@ -108,4 +141,10 @@ function isValidIsoDateOnly(value: string): boolean {
   return date.getUTCFullYear() === year
     && date.getUTCMonth() === month - 1
     && date.getUTCDate() === day;
+}
+
+
+function safeDiagnosticId(value: string | null | undefined): string | null {
+  const trimmed = value?.trim() ?? "";
+  return /^[A-Za-z0-9._:-]{1,128}$/.test(trimmed) ? trimmed : null;
 }

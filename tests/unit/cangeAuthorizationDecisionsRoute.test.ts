@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { AvantioApiGateway } from "../../src/apiGateways/avantio/getAppointments";
+import { AvantioProviderError } from "../../src/integrations/avantio/accommodations/providerErrors";
 import {
   CangeAuthorizationDecisions,
   todayInSaoPaulo,
@@ -200,6 +201,67 @@ describe("CangeAuthorizationDecisions route", () => {
 
   it("calculates Sao_Paulo today deterministically", () => {
     expect(todayInSaoPaulo(new Date("2026-06-22T02:30:00.000Z"))).toBe("2026-06-21");
+  });
+
+  it("returns 503 with the original provider code after transient Avantio failures are exhausted", async () => {
+    vi.spyOn(CangeAuthorizationDecisionService.prototype, "getDecisions").mockRejectedValue(
+      new AvantioProviderError(
+        "temporarily_unavailable",
+        "provider_http_503",
+        "Avantio unavailable",
+        "body_received",
+        503,
+        "req-503",
+      ),
+    );
+
+    const response = await new CangeAuthorizationDecisions().handle(buildContext({
+      method: "GET",
+      url: `http://local.test/v1/cange/authorization-decisions?date=${DATE}`,
+    }) as never);
+
+    expect(response).toEqual({
+      status: 503,
+      body: {
+        success: false,
+        mode: "decision_only",
+        date: DATE,
+        error: "avantio_temporarily_unavailable",
+        errorCode: "provider_http_503",
+        retryable: true,
+        providerStatus: 503,
+      },
+    });
+  });
+
+  it("returns 502 without retryable for permanent Avantio rejection", async () => {
+    vi.spyOn(CangeAuthorizationDecisionService.prototype, "getDecisions").mockRejectedValue(
+      new AvantioProviderError(
+        "provider_rejected",
+        "provider_http_401",
+        "Avantio rejected request",
+        "body_received",
+        401,
+      ),
+    );
+
+    const response = await new CangeAuthorizationDecisions().handle(buildContext({
+      method: "GET",
+      url: `http://local.test/v1/cange/authorization-decisions?date=${DATE}`,
+    }) as never);
+
+    expect(response).toEqual({
+      status: 502,
+      body: {
+        success: false,
+        mode: "decision_only",
+        date: DATE,
+        error: "avantio_provider_error",
+        errorCode: "provider_http_401",
+        retryable: false,
+        providerStatus: 401,
+      },
+    });
   });
 
   it("returns 200 for sparse Avantio bookings without optional references or structural metadata", async () => {
