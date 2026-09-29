@@ -212,6 +212,56 @@ function resolveAccommodationCursor(
     return `${trustedListUrl.origin}${trustedListUrl.pathname}${continuationQuery}`;
 }
 
+const AVANTIO_LIST_MAX_ATTEMPTS = 5;
+const AVANTIO_LIST_RETRY_BASE_MS = 750;
+const AVANTIO_LIST_RETRY_CAP_MS = 8_000;
+
+function isRetryableListStatus(status: number): boolean {
+    return status === 429 || status >= 500;
+}
+
+function parseRetryAfterMs(value: string | null): number | null {
+    if (!value) return null;
+    const seconds = Number(value);
+    if (Number.isFinite(seconds) && seconds >= 0) return Math.min(seconds * 1000, AVANTIO_LIST_RETRY_CAP_MS);
+
+    const retryAt = Date.parse(value);
+    if (!Number.isFinite(retryAt)) return null;
+    return Math.min(Math.max(retryAt - Date.now(), 0), AVANTIO_LIST_RETRY_CAP_MS);
+}
+
+function retryDelayMs(attempt: number, retryAfter: string | null): number {
+    const providerDelay = parseRetryAfterMs(retryAfter);
+    if (providerDelay !== null) return providerDelay;
+
+    const exponential = Math.min(
+        AVANTIO_LIST_RETRY_BASE_MS * (2 ** Math.max(attempt - 1, 0)),
+        AVANTIO_LIST_RETRY_CAP_MS,
+    );
+    const jitter = Math.floor(Math.random() * Math.max(Math.floor(exponential * 0.25), 1));
+    return exponential + jitter;
+}
+
+async function sleep(ms: number): Promise<void> {
+    await new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function logListRetry(url: string, attempt: number, reason: string, status: number | null, delayMs: number, providerRequestId: string | null): void {
+    const parsed = new URL(url);
+    const diagnostic: Record<string, unknown> = {
+        event: "avantio_list_retry",
+        path: parsed.pathname,
+        attempt,
+        max_attempts: AVANTIO_LIST_MAX_ATTEMPTS,
+        reason,
+        delay_ms: delayMs,
+    };
+    if (status !== null) diagnostic.provider_http_status = status;
+    const safeRequestId = safeDiagnosticId(providerRequestId);
+    if (safeRequestId) diagnostic.provider_request_id = safeRequestId;
+    console.warn(JSON.stringify(diagnostic));
+}
+
 export class AvantioApiGateway {
     private apiKey: string;
     private baseUrl: string;
@@ -235,25 +285,83 @@ export class AvantioApiGateway {
         console.log(`[AvantioService] Iniciando busca: ${initialUrl}`);
 
         while (nextUrl) {
-            const response = await fetch(nextUrl, {
-                method: "GET",
-                headers: {
-                    "X-Avantio-Auth": this.apiKey,
-                    "accept": "application/json",
-                },
-            });
+            let response: Response | null = null;
+            let providerRequestId: string | null = null;
+            let lastNetworkError: unknown = null;
 
-            const providerRequestId = response.headers.get("x-avantio-request-id") ?? response.headers.get("x-request-id") ?? response.headers.get("request-id");
+            for (let attempt = 1; attempt <= AVANTIO_LIST_MAX_ATTEMPTS; attempt += 1) {
+                try {
+                    response = await fetch(nextUrl, {
+                        method: "GET",
+                        headers: {
+                            "X-Avantio-Auth": this.apiKey,
+                            "accept": "application/json",
+                        },
+                    });
+                    providerRequestId = response.headers.get("x-avantio-request-id")
+                        ?? response.headers.get("x-request-id")
+                        ?? response.headers.get("request-id");
+
+                    if (response.ok || !isRetryableListStatus(response.status)) break;
+
+                    if (attempt < AVANTIO_LIST_MAX_ATTEMPTS) {
+                        const delayMs = retryDelayMs(attempt, response.headers.get("retry-after"));
+                        logListRetry(nextUrl, attempt, `provider_http_${response.status}`, response.status, delayMs, providerRequestId);
+                        await sleep(delayMs);
+                        response = null;
+                        continue;
+                    }
+                } catch (error: unknown) {
+                    lastNetworkError = error;
+                    response = null;
+
+                    if (attempt < AVANTIO_LIST_MAX_ATTEMPTS) {
+                        const delayMs = retryDelayMs(attempt, null);
+                        logListRetry(nextUrl, attempt, "provider_network_failure", null, delayMs, null);
+                        await sleep(delayMs);
+                        continue;
+                    }
+                }
+            }
+
+            if (!response) {
+                throw new AvantioProviderError(
+                    "temporarily_unavailable",
+                    "provider_network_failure",
+                    lastNetworkError instanceof Error
+                        ? `A consulta à Avantio falhou após tentativas: ${lastNetworkError.message}`
+                        : "A consulta à Avantio falhou após múltiplas tentativas.",
+                    "fetch_invoked",
+                );
+            }
+
             const responseText = await response.text();
 
             if (!response.ok) {
                 console.error(`[AvantioService] Erro na requisicao: ${response.status}`);
-                throw new AvantioProviderError(classifyReceivedStatus(response.status), `provider_http_${response.status}`, "A Avantio rejeitou ou não conseguiu processar a consulta.", "body_received", response.status, providerRequestId);
+                throw new AvantioProviderError(
+                    classifyReceivedStatus(response.status),
+                    `provider_http_${response.status}`,
+                    "A Avantio rejeitou ou não conseguiu processar a consulta.",
+                    "body_received",
+                    response.status,
+                    providerRequestId,
+                );
             }
 
             let payload: AvantioResponse<T>;
-            try { payload = JSON.parse(responseText) as AvantioResponse<T>; }
-            catch { throw new AvantioProviderError("invalid_provider_response", "malformed_provider_json", "A Avantio retornou JSON inválido.", "body_received", response.status, providerRequestId); }
+            try {
+                payload = JSON.parse(responseText) as AvantioResponse<T>;
+            } catch {
+                throw new AvantioProviderError(
+                    "invalid_provider_response",
+                    "malformed_provider_json",
+                    "A Avantio retornou JSON inválido.",
+                    "body_received",
+                    response.status,
+                    providerRequestId,
+                );
+            }
 
             if (payload.data && payload.data.length > 0) {
                 allItems = allItems.concat(payload.data);
