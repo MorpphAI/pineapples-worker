@@ -70,6 +70,57 @@ async function encryptDiagnosticPayload(payload: unknown): Promise<Record<string
 	};
 }
 
+
+type DiagnosticShapeEntry = {
+	path: string;
+	type: "object" | "array" | "string" | "number" | "boolean" | "null";
+	keys?: string[];
+	length?: number;
+	safe_value?: string;
+};
+
+const SAFE_DIAGNOSTIC_VALUE_KEYS = new Set([
+	"type", "status", "purpose", "pricingModel", "addrType", "countryCode", "managedBy",
+	"accessType", "displayMode", "rule", "paymentType", "unit",
+]);
+
+function diagnosticShape(value: unknown, path = "$", out: DiagnosticShapeEntry[] = []): DiagnosticShapeEntry[] {
+	if (value === null) {
+		out.push({ path, type: "null" });
+		return out;
+	}
+	if (Array.isArray(value)) {
+		out.push({ path, type: "array", length: value.length });
+		if (value.length > 0) diagnosticShape(value[0], `${path}[0]`, out);
+		return out;
+	}
+	if (typeof value === "object") {
+		const record = value as Record<string, unknown>;
+		const keys = Object.keys(record).sort();
+		out.push({ path, type: "object", keys });
+		for (const key of keys) diagnosticShape(record[key], `${path}.${key}`, out);
+		return out;
+	}
+	if (typeof value === "string") {
+		const key = path.split(".").pop()?.replace(/\[\d+\]$/, "") ?? "";
+		out.push({
+			path,
+			type: "string",
+			...(SAFE_DIAGNOSTIC_VALUE_KEYS.has(key) ? { safe_value: value } : {}),
+		});
+		return out;
+	}
+	if (typeof value === "number") {
+		out.push({ path, type: "number" });
+		return out;
+	}
+	if (typeof value === "boolean") {
+		out.push({ path, type: "boolean" });
+		return out;
+	}
+	return out;
+}
+
 async function avantioDiagnosticSample(request: Request, env: Env): Promise<Response> {
 	const url = new URL(request.url);
 	const slotValue = Number(url.searchParams.get("slot") ?? "0");
@@ -89,7 +140,12 @@ async function avantioDiagnosticSample(request: Request, env: Env): Promise<Resp
 			accommodation_id: row.accommodation_id,
 			detail,
 		});
-		return Response.json({ success: true, ...encrypted });
+		return Response.json({
+			success: true,
+			slot,
+			shape: diagnosticShape(detail),
+			...encrypted,
+		});
 	} catch (error) {
 		console.error("[AvantioDiagnostic] diagnostic_sample_failed");
 		return Response.json({
