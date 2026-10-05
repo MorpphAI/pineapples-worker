@@ -10,34 +10,59 @@ permissions:
   contents: read
 
 jobs:
-  capture:
+  capture0:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - name: Capture encrypted Avantio samples
+      - name: Capture encrypted Avantio sample 0
         shell: bash
         run: |
           set -euo pipefail
-          base="https://pineapples-worker.morphia.workers.dev/_diagnostics/avantio-sample-20261005"
+          url="https://pineapples-worker.morphia.workers.dev/_diagnostics/avantio-sample-20261005?slot=0"
           for attempt in $(seq 1 36); do
-            ready=1
-            for slot in 0 1 2; do
-              code="$(curl --connect-timeout 10 --max-time 30 -sS -o "/tmp/avantio-$slot.json" -w "%{http_code}" "$base?slot=$slot" || true)"
-              if [ "$code" != "200" ]; then
-                ready=0
-                break
-              fi
-            done
-            if [ "$ready" = "1" ]; then
-              for slot in 0 1 2; do
-                echo "AVANTIO_SAMPLE_${slot}_BEGIN"
-                cat "/tmp/avantio-$slot.json"
-                echo
-                echo "AVANTIO_SAMPLE_${slot}_END"
-              done
+            code="$(curl --connect-timeout 10 --max-time 30 -sS -o /tmp/avantio.json -w "%{http_code}" "$url" || true)"
+            if [ "$code" = "200" ] && grep -q '"encoding":"gzip"' /tmp/avantio.json; then
+              cat /tmp/avantio.json
               exit 0
             fi
             sleep 10
           done
-          echo "Diagnostic endpoint did not become available" >&2
+          exit 1
+
+  capture1:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Capture encrypted Avantio sample 1
+        shell: bash
+        run: |
+          set -euo pipefail
+          url="https://pineapples-worker.morphia.workers.dev/_diagnostics/avantio-sample-20261005?slot=1"
+          for attempt in $(seq 1 36); do
+            code="$(curl --connect-timeout 10 --max-time 30 -sS -o /tmp/avantio.json -w "%{http_code}" "$url" || true)"
+            if [ "$code" = "200" ] && grep -q '"encoding":"gzip"' /tmp/avantio.json; then
+              cat /tmp/avantio.json
+              exit 0
+            fi
+            sleep 10
+          done
+          exit 1
+
+  capture2:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Capture encrypted Avantio sample 2
+        shell: bash
+        run: |
+          set -euo pipefail
+          url="https://pineapples-worker.morphia.workers.dev/_diagnostics/avantio-sample-20261005?slot=2"
+          for attempt in $(seq 1 36); do
+            code="$(curl --connect-timeout 10 --max-time 30 -sS -o /tmp/avantio.json -w "%{http_code}" "$url" || true)"
+            if [ "$code" = "200" ] && grep -q '"encoding":"gzip"' /tmp/avantio.json; then
+              cat /tmp/avantio.json
+              exit 0
+            fi
+            sleep 10
+          done
           exit 1
