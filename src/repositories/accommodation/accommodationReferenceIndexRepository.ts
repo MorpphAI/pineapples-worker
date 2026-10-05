@@ -242,6 +242,53 @@ export class AccommodationReferenceIndexRepository {
     }
   }
 
+  async listActiveRecords(limit = 100, afterAccommodationId: string | null = null): Promise<{
+    records: AccommodationIndexRecord[];
+    next_cursor: string | null;
+    completed_at: string;
+  }> {
+    const state = await this.getState();
+    if (!state.active_generation_id?.trim() || !state.completed_at) {
+      throw new AccommodationIndexError(
+        "accommodation_index_refresh_required",
+        "Conclua uma atualização completa do índice de acomodações.",
+      );
+    }
+
+    const boundedLimit = Math.max(1, Math.min(200, Math.floor(limit)));
+    try {
+      const { results } = afterAccommodationId
+        ? await this.db.prepare(`
+            SELECT accommodation_id, external_reference, name, remote_status, inspected_at
+            FROM avantio_accommodation_reference_index
+            WHERE generation_id = ?
+              AND accommodation_id > ? COLLATE BINARY
+              AND LENGTH(TRIM(accommodation_id)) > 0
+            ORDER BY accommodation_id ASC
+            LIMIT ?
+          `).bind(state.active_generation_id, afterAccommodationId, boundedLimit + 1).all<AccommodationIndexRecord>()
+        : await this.db.prepare(`
+            SELECT accommodation_id, external_reference, name, remote_status, inspected_at
+            FROM avantio_accommodation_reference_index
+            WHERE generation_id = ?
+              AND LENGTH(TRIM(accommodation_id)) > 0
+            ORDER BY accommodation_id ASC
+            LIMIT ?
+          `).bind(state.active_generation_id, boundedLimit + 1).all<AccommodationIndexRecord>();
+
+      const rows = results ?? [];
+      const hasMore = rows.length > boundedLimit;
+      const records = hasMore ? rows.slice(0, boundedLimit) : rows;
+      return {
+        records,
+        next_cursor: hasMore ? records[records.length - 1]?.accommodation_id ?? null : null,
+        completed_at: state.completed_at,
+      };
+    } catch (error) {
+      throw mapDatabaseError(error);
+    }
+  }
+
   async markRefreshRequired(code = "accommodation_index_refresh_required"): Promise<void> {
     try {
       await this.db.prepare(`
