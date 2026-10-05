@@ -14,15 +14,15 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - name: Capture encrypted Avantio sample 0
+      - name: Capture redacted Avantio shape 0
         shell: bash
         run: |
           set -euo pipefail
           url="https://pineapples-worker.morphia.workers.dev/_diagnostics/avantio-sample-20261005?slot=0"
           for attempt in $(seq 1 36); do
             code="$(curl --connect-timeout 10 --max-time 30 -sS -o /tmp/avantio.json -w "%{http_code}" "$url" || true)"
-            if [ "$code" = "200" ] && grep -q '"encoding":"gzip"' /tmp/avantio.json; then
-              cat /tmp/avantio.json
+            if [ "$code" = "200" ] && jq -e '.shape and .encoding == "gzip"' /tmp/avantio.json >/dev/null; then
+              jq '{success,slot,shape}' /tmp/avantio.json
               exit 0
             fi
             sleep 10
@@ -33,15 +33,15 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - name: Capture encrypted Avantio sample 1
+      - name: Capture redacted Avantio shape 1
         shell: bash
         run: |
           set -euo pipefail
           url="https://pineapples-worker.morphia.workers.dev/_diagnostics/avantio-sample-20261005?slot=1"
           for attempt in $(seq 1 36); do
             code="$(curl --connect-timeout 10 --max-time 30 -sS -o /tmp/avantio.json -w "%{http_code}" "$url" || true)"
-            if [ "$code" = "200" ] && grep -q '"encoding":"gzip"' /tmp/avantio.json; then
-              cat /tmp/avantio.json
+            if [ "$code" = "200" ] && jq -e '.shape and .encoding == "gzip"' /tmp/avantio.json >/dev/null; then
+              jq '{success,slot,shape}' /tmp/avantio.json
               exit 0
             fi
             sleep 10
@@ -52,15 +52,15 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - name: Capture encrypted Avantio sample 2
+      - name: Capture redacted Avantio shape 2
         shell: bash
         run: |
           set -euo pipefail
           url="https://pineapples-worker.morphia.workers.dev/_diagnostics/avantio-sample-20261005?slot=2"
           for attempt in $(seq 1 36); do
             code="$(curl --connect-timeout 10 --max-time 30 -sS -o /tmp/avantio.json -w "%{http_code}" "$url" || true)"
-            if [ "$code" = "200" ] && grep -q '"encoding":"gzip"' /tmp/avantio.json; then
-              cat /tmp/avantio.json
+            if [ "$code" = "200" ] && jq -e '.shape and .encoding == "gzip"' /tmp/avantio.json >/dev/null; then
+              jq '{success,slot,shape}' /tmp/avantio.json
               exit 0
             fi
             sleep 10
