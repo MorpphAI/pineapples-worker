@@ -42,6 +42,11 @@ function toBase64(bytes: Uint8Array): string {
 	return btoa(binary);
 }
 
+async function gzip(value: string): Promise<Uint8Array> {
+	const stream = new Blob([value]).stream().pipeThrough(new CompressionStream("gzip"));
+	return new Uint8Array(await new Response(stream).arrayBuffer());
+}
+
 async function encryptDiagnosticPayload(payload: unknown): Promise<Record<string, string>> {
 	const publicKey = await crypto.subtle.importKey(
 		"spki",
@@ -54,10 +59,11 @@ async function encryptDiagnosticPayload(payload: unknown): Promise<Record<string
 	const rawAesKey = new Uint8Array(await crypto.subtle.exportKey("raw", aesKey));
 	const encryptedKey = new Uint8Array(await crypto.subtle.encrypt({ name: "RSA-OAEP" }, publicKey, rawAesKey));
 	const iv = crypto.getRandomValues(new Uint8Array(12));
-	const plaintext = new TextEncoder().encode(JSON.stringify(payload));
+	const plaintext = await gzip(JSON.stringify(payload));
 	const ciphertext = new Uint8Array(await crypto.subtle.encrypt({ name: "AES-GCM", iv }, aesKey, plaintext));
 	return {
 		alg: "RSA-OAEP-SHA256+A256GCM",
+		encoding: "gzip",
 		iv: toBase64(iv),
 		encrypted_key: toBase64(encryptedKey),
 		ciphertext: toBase64(ciphertext),
