@@ -1,0 +1,43 @@
+name: Temporary Avantio diagnostic
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  capture:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Capture encrypted Avantio samples
+        shell: bash
+        run: |
+          set -euo pipefail
+          base="https://pineapples-worker.morphia.workers.dev/_diagnostics/avantio-sample-20261005"
+          for attempt in $(seq 1 36); do
+            ready=1
+            for slot in 0 1 2; do
+              code="$(curl --connect-timeout 10 --max-time 30 -sS -o "/tmp/avantio-$slot.json" -w "%{http_code}" "$base?slot=$slot" || true)"
+              if [ "$code" != "200" ]; then
+                ready=0
+                break
+              fi
+            done
+            if [ "$ready" = "1" ]; then
+              for slot in 0 1 2; do
+                echo "AVANTIO_SAMPLE_${slot}_BEGIN"
+                cat "/tmp/avantio-$slot.json"
+                echo
+                echo "AVANTIO_SAMPLE_${slot}_END"
+              done
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "Diagnostic endpoint did not become available" >&2
+          exit 1
