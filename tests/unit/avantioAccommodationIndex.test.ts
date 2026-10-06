@@ -85,22 +85,18 @@ describe("bounded incremental Avantio accommodation index", () => {
     const result = await new SyncAccommodationsService(env as any).sync();
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(new URL(fetchMock.mock.calls[0][0]).searchParams.get("pagination_size")).toBe("40");
+    expect(new URL(fetchMock.mock.calls[0][0]).searchParams.get("pagination_size")).toBe("50");
     expect(result).toEqual({ synced: 10, complete: false, processed_records: 10, processed_pages: 1, active_generation_available: false, building: true });
   });
 
-  it("uses at most eleven provider requests for ten records requiring detail hydration", async () => {
+  it("indexes records with missing externalReference without per-record detail reads", async () => {
     const records = Array.from({ length: 10 }, (_, index) => rawRecord(`id-${index}`));
-    const fetchMock = vi.fn().mockImplementation(async (url: string) => {
-      if (new URL(url).pathname === "/accommodations") return providerResponse({ data: records });
-      const id = new URL(url).pathname.split("/").pop()!;
-      return providerResponse({ data: rawRecord(id) });
-    });
+    const fetchMock = vi.fn().mockResolvedValue(providerResponse({ data: records }));
     vi.stubGlobal("fetch", fetchMock);
 
     const result = await new SyncAccommodationsService(env as any).sync();
     expect(result.complete).toBe(true);
-    expect(fetchMock).toHaveBeenCalledTimes(11);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
     const nullReferences = await testEnv.DB.prepare("SELECT COUNT(*) AS count FROM avantio_accommodation_reference_index WHERE external_reference IS NULL").first<{ count: number }>();
     expect(nullReferences?.count).toBe(10);
   });
@@ -197,28 +193,13 @@ describe("bounded incremental Avantio accommodation index", () => {
     expect(state.status).toBe("failed");
   });
 
-  it("hydrates a missing reference through one detail request and stores an exact value", async () => {
-    const fetchMock = vi.fn()
-      .mockResolvedValueOnce(providerResponse({ data: [rawRecord("detail-id")] }))
-      .mockResolvedValueOnce(providerResponse({ data: rawRecord("detail-id", "ExactCase") }));
+  it("preserves a list-provided external reference without extra provider reads", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(providerResponse({ data: [rawRecord("detail-id", "ExactCase")] }));
     vi.stubGlobal("fetch", fetchMock);
     await new SyncAccommodationsService(env as any).sync();
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
     const row = await testEnv.DB.prepare("SELECT accommodation_id, external_reference FROM avantio_accommodation_reference_index").first<{ accommodation_id: string; external_reference: string }>();
     expect(row).toEqual({ accommodation_id: "detail-id", external_reference: "ExactCase" });
-  });
-
-  it("retains a resumable generation when detail hydration fails", async () => {
-    await seedActive();
-    const fetchMock = vi.fn()
-      .mockResolvedValueOnce(providerResponse({ data: [rawRecord("detail-id")] }))
-      .mockResolvedValueOnce(providerResponse({}, 503));
-    vi.stubGlobal("fetch", fetchMock);
-    await expect(new SyncAccommodationsService(env as any).sync()).rejects.toMatchObject({ code: "accommodation_index_detail_failed" });
-    const state = await new AccommodationReferenceIndexRepository(testEnv.DB).getState();
-    expect(state.active_generation_id).toBe("old-active");
-    expect(state.building_generation_id).not.toBeNull();
-    expect(state.last_error_code).toBe("accommodation_index_detail_failed");
   });
 
   it("updates the existing accommodation cache during each batch", async () => {
