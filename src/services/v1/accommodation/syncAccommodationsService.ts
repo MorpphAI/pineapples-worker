@@ -11,8 +11,8 @@ import { AccommodationRepository } from "../../../repositories/accommodation/acc
 import { Env } from "../../../types/configTypes";
 import { AvantioAccommodation } from "../../../types/avantioTypes";
 
-export const ACCOMMODATION_SYNC_PAGE_SIZE = 10;
-export const ACCOMMODATION_SYNC_MAX_PROVIDER_REQUESTS = 20;
+export const ACCOMMODATION_SYNC_PAGE_SIZE = 40;
+export const ACCOMMODATION_SYNC_MAX_PROVIDER_REQUESTS = 45;
 export const ACCOMMODATION_SYNC_LEASE_SECONDS = 300;
 
 export type AccommodationSyncResult = {
