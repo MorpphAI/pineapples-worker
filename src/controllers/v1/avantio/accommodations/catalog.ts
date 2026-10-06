@@ -27,16 +27,19 @@ export class AvantioAccommodationCatalog extends OpenAPIRoute {
     const cursor = c.req.query("cursor")?.trim() || null;
 
     try {
-      // Advance one bounded live index batch on every PineOS catalog page.
-      // Failures are best-effort: the last complete/partially refreshed view
-      // remains readable instead of turning a provider hiccup into downtime.
-      try {
-        await new SyncAccommodationsService(c.env).sync();
-      } catch (error) {
-        const refreshCode = error instanceof AccommodationSyncError
-          ? error.code
-          : "accommodation_index_batch_failed";
-        console.warn(`[AvantioAccommodationCatalog] refresh_best_effort code=${refreshCode}`);
+      // Older PineOS Edge deployments do not have the explicit refresh_index
+      // command. For those callers, advance one bounded live batch per catalog
+      // page. Newer Edge deployments refresh first and opt out via this header.
+      const alreadyRefreshed = c.req.header("x-pineos-index-refreshed") === "1";
+      if (!alreadyRefreshed) {
+        try {
+          await new SyncAccommodationsService(c.env).sync();
+        } catch (error) {
+          const refreshCode = error instanceof AccommodationSyncError
+            ? error.code
+            : "accommodation_index_batch_failed";
+          console.warn(`[AvantioAccommodationCatalog] refresh_best_effort code=${refreshCode}`);
+        }
       }
 
       const page = await new AccommodationReferenceIndexRepository(c.env.DB)
