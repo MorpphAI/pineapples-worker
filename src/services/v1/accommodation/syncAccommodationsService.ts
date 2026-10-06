@@ -11,8 +11,8 @@ import { AccommodationRepository } from "../../../repositories/accommodation/acc
 import { Env } from "../../../types/configTypes";
 import { AvantioAccommodation } from "../../../types/avantioTypes";
 
-export const ACCOMMODATION_SYNC_PAGE_SIZE = 40;
-export const ACCOMMODATION_SYNC_MAX_PROVIDER_REQUESTS = 45;
+export const ACCOMMODATION_SYNC_PAGE_SIZE = 50;
+export const ACCOMMODATION_SYNC_MAX_PROVIDER_REQUESTS = 5;
 export const ACCOMMODATION_SYNC_LEASE_SECONDS = 300;
 
 export type AccommodationSyncResult = {
@@ -45,7 +45,7 @@ export class ProviderSubrequestBudget {
     get count(): number { return this.used; }
 }
 
-type SyncGateway = Pick<AvantioApiGateway, "getAccommodationsPage" | "getAccommodationStrict">;
+type SyncGateway = Pick<AvantioApiGateway, "getAccommodationsPage">;
 type ReferenceIndex = Pick<AccommodationReferenceIndexRepository, "getState" | "acquireBatchLease" | "renewBatchLease" | "releaseBatchLease" | "startGeneration" | "resumeGeneration" | "markBatchFailed" | "savePage">;
 type AccommodationCache = Pick<AccommodationRepository, "upsertMany">;
 
@@ -129,32 +129,20 @@ export class SyncAccommodationsService {
                     throw new AccommodationSyncError("accommodation_index_record_invalid", "Uma acomodação não possui ID autoritativo.");
                 }
 
-                let inspected = listRecord;
-                let externalReference: string | null;
-                if (typeof listRecord.externalReference === "string") {
-                    externalReference = listRecord.externalReference;
-                } else {
-                    budget.consume();
-                    try {
-                        inspected = await this.avantioApiGateway.getAccommodationStrict(accommodationId);
-                    } catch {
-                        throw new AccommodationSyncError("accommodation_index_detail_failed", "O detalhe de uma acomodação não pôde ser inspecionado.");
-                    }
-                    if (inspected.externalReference === undefined || inspected.externalReference === null) {
-                        externalReference = null;
-                    } else if (typeof inspected.externalReference === "string") {
-                        externalReference = inspected.externalReference;
-                    } else {
-                        throw new AccommodationSyncError("accommodation_index_detail_failed", "O detalhe contém uma referência externa inválida.");
-                    }
-                }
-
-                const merged = { ...listRecord, ...inspected, id: accommodationId } as unknown as AvantioAccommodation;
+                // The outbound PineOS -> Avantio reconciliation path was removed.
+                // The index is now only a discovery catalog for inbound imports, so
+                // missing externalReference must not trigger one provider detail GET
+                // per historical accommodation. PineOS reads the full detail only
+                // for records it has not imported yet.
+                const externalReference = typeof listRecord.externalReference === "string"
+                    ? optionalString(listRecord.externalReference)
+                    : null;
+                const merged = { ...listRecord, id: accommodationId } as unknown as AvantioAccommodation;
                 indexRecords.push({
                     accommodation_id: accommodationId,
                     external_reference: externalReference,
-                    name: optionalString(inspected.name ?? listRecord.name),
-                    remote_status: optionalString(inspected.status ?? listRecord.status),
+                    name: optionalString(listRecord.name),
+                    remote_status: optionalString(listRecord.status),
                     inspected_at: inspectedAt,
                 });
                 cacheRecords.push(merged);
