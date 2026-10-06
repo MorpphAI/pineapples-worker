@@ -2,11 +2,20 @@ import { SELF } from "cloudflare:test";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { AvantioApiGateway } from "../../src/apiGateways/avantio/getAppointments";
 import { AccommodationReferenceIndexRepository } from "../../src/repositories/accommodation/accommodationReferenceIndexRepository";
+import { SyncAccommodationsService } from "../../src/services/v1/accommodation/syncAccommodationsService";
 
 const authHeaders = { "x-api-key": "test-key" };
 
 beforeEach(() => {
   vi.restoreAllMocks();
+  vi.spyOn(SyncAccommodationsService.prototype, "sync").mockResolvedValue({
+    synced: 0,
+    complete: false,
+    processed_records: 0,
+    processed_pages: 0,
+    active_generation_available: true,
+    building: true,
+  });
 });
 
 describe("Avantio inbound catalog routes", () => {
