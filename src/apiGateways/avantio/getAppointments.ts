@@ -416,7 +416,7 @@ export class AvantioApiGateway {
     }
 
     async getAccommodationsPage(nextPageUrl: string | null, pageSize = 10): Promise<AvantioAccommodationPage> {
-        const boundedPageSize = Math.max(1, Math.min(10, Math.floor(pageSize)));
+        const boundedPageSize = Math.max(1, Math.min(40, Math.floor(pageSize)));
         let listUrl: URL;
         try {
             listUrl = new URL(`${this.baseUrl.replace(/\/+$/, "")}/accommodations`);
