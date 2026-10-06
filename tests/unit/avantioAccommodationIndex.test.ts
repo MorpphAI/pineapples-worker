@@ -85,7 +85,7 @@ describe("bounded incremental Avantio accommodation index", () => {
     const result = await new SyncAccommodationsService(env as any).sync();
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(new URL(fetchMock.mock.calls[0][0]).searchParams.get("pagination_size")).toBe("10");
+    expect(new URL(fetchMock.mock.calls[0][0]).searchParams.get("pagination_size")).toBe("40");
     expect(result).toEqual({ synced: 10, complete: false, processed_records: 10, processed_pages: 1, active_generation_available: false, building: true });
   });
 
