@@ -3,6 +3,7 @@ import { Context } from "hono";
 import { AvantioApiGateway } from "../../../../apiGateways/avantio/getAppointments";
 import { AccommodationIndexError, AccommodationReferenceIndexRepository } from "../../../../repositories/accommodation/accommodationReferenceIndexRepository";
 import { Env } from "../../../../types/configTypes";
+import { AccommodationSyncError, SyncAccommodationsService } from "../../../../services/v1/accommodation/syncAccommodationsService";
 
 type CatalogContext = Context<{ Bindings: Env }>;
 
@@ -26,6 +27,18 @@ export class AvantioAccommodationCatalog extends OpenAPIRoute {
     const cursor = c.req.query("cursor")?.trim() || null;
 
     try {
+      // Advance one bounded live index batch on every PineOS catalog page.
+      // Failures are best-effort: the last complete/partially refreshed view
+      // remains readable instead of turning a provider hiccup into downtime.
+      try {
+        await new SyncAccommodationsService(c.env).sync();
+      } catch (error) {
+        const refreshCode = error instanceof AccommodationSyncError
+          ? error.code
+          : "accommodation_index_batch_failed";
+        console.warn(`[AvantioAccommodationCatalog] refresh_best_effort code=${refreshCode}`);
+      }
+
       const page = await new AccommodationReferenceIndexRepository(c.env.DB)
         .listActiveRecords(limit, cursor);
       return c.json({
