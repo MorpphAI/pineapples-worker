@@ -256,25 +256,77 @@ export class AccommodationReferenceIndexRepository {
     }
 
     const boundedLimit = Math.max(1, Math.min(200, Math.floor(limit)));
+    const activeGeneration = state.active_generation_id;
+    const buildingGeneration = state.building_generation_id?.trim() || null;
+
     try {
-      const { results } = afterAccommodationId
-        ? await this.db.prepare(`
-            SELECT accommodation_id, external_reference, name, remote_status, inspected_at
+      let results: AccommodationIndexRecord[] | undefined;
+
+      if (buildingGeneration) {
+        // During a refresh, expose newly inspected records immediately while
+        // retaining the previous complete generation for records not reached
+        // yet. Building rows win by accommodation_id.
+        const cursorClause = afterAccommodationId
+          ? "AND accommodation_id > ? COLLATE BINARY"
+          : "";
+        const sql = `
+          WITH current_records AS (
+            SELECT accommodation_id, external_reference, name, remote_status, inspected_at, 0 AS priority
             FROM avantio_accommodation_reference_index
             WHERE generation_id = ?
-              AND accommodation_id > ? COLLATE BINARY
+              ${cursorClause}
               AND LENGTH(TRIM(accommodation_id)) > 0
-            ORDER BY accommodation_id ASC
-            LIMIT ?
-          `).bind(state.active_generation_id, afterAccommodationId, boundedLimit + 1).all<AccommodationIndexRecord>()
-        : await this.db.prepare(`
-            SELECT accommodation_id, external_reference, name, remote_status, inspected_at
+            UNION ALL
+            SELECT accommodation_id, external_reference, name, remote_status, inspected_at, 1 AS priority
             FROM avantio_accommodation_reference_index
             WHERE generation_id = ?
+              ${cursorClause}
               AND LENGTH(TRIM(accommodation_id)) > 0
-            ORDER BY accommodation_id ASC
-            LIMIT ?
-          `).bind(state.active_generation_id, boundedLimit + 1).all<AccommodationIndexRecord>();
+          ),
+          deduplicated AS (
+            SELECT accommodation_id, external_reference, name, remote_status, inspected_at,
+                   ROW_NUMBER() OVER (PARTITION BY accommodation_id ORDER BY priority DESC) AS row_rank
+            FROM current_records
+          )
+          SELECT accommodation_id, external_reference, name, remote_status, inspected_at
+          FROM deduplicated
+          WHERE row_rank = 1
+          ORDER BY accommodation_id ASC
+          LIMIT ?
+        `;
+
+        const statement = this.db.prepare(sql);
+        const bound = afterAccommodationId
+          ? statement.bind(
+              activeGeneration,
+              afterAccommodationId,
+              buildingGeneration,
+              afterAccommodationId,
+              boundedLimit + 1,
+            )
+          : statement.bind(activeGeneration, buildingGeneration, boundedLimit + 1);
+        ({ results } = await bound.all<AccommodationIndexRecord>());
+      } else {
+        const response = afterAccommodationId
+          ? await this.db.prepare(`
+              SELECT accommodation_id, external_reference, name, remote_status, inspected_at
+              FROM avantio_accommodation_reference_index
+              WHERE generation_id = ?
+                AND accommodation_id > ? COLLATE BINARY
+                AND LENGTH(TRIM(accommodation_id)) > 0
+              ORDER BY accommodation_id ASC
+              LIMIT ?
+            `).bind(activeGeneration, afterAccommodationId, boundedLimit + 1).all<AccommodationIndexRecord>()
+          : await this.db.prepare(`
+              SELECT accommodation_id, external_reference, name, remote_status, inspected_at
+              FROM avantio_accommodation_reference_index
+              WHERE generation_id = ?
+                AND LENGTH(TRIM(accommodation_id)) > 0
+              ORDER BY accommodation_id ASC
+              LIMIT ?
+            `).bind(activeGeneration, boundedLimit + 1).all<AccommodationIndexRecord>();
+        results = response.results;
+      }
 
       const rows = results ?? [];
       const hasMore = rows.length > boundedLimit;
