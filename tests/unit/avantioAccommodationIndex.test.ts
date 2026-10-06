@@ -108,6 +108,31 @@ describe("bounded incremental Avantio accommodation index", () => {
     expect(budget.count).toBe(ACCOMMODATION_SYNC_MAX_PROVIDER_REQUESTS);
   });
 
+  it("serves newly inspected building records alongside the last complete generation", async () => {
+    await seedActive();
+    const now = new Date().toISOString();
+    await testEnv.DB.prepare(`
+      UPDATE avantio_accommodation_index_sync_state
+      SET building_generation_id = 'building-now', status = 'building', started_at = ?, updated_at = ?
+      WHERE singleton_id = 1
+    `).bind(now, now).run();
+    await testEnv.DB.prepare(`
+      INSERT INTO avantio_accommodation_reference_index
+        (generation_id, accommodation_id, external_reference, name, remote_status, inspected_at)
+      VALUES
+        ('building-now', 'old-id', 'OLD-UPDATED', 'Old updated', 'ENABLED', ?),
+        ('building-now', 'new-id', 'NEW', 'New accommodation', 'ENABLED', ?)
+    `).bind(now, now).run();
+
+    const page = await new AccommodationReferenceIndexRepository(testEnv.DB)
+      .listActiveRecords(10, null);
+
+    expect(page.records).toEqual([
+      expect.objectContaining({ accommodation_id: "new-id", external_reference: "NEW" }),
+      expect.objectContaining({ accommodation_id: "old-id", external_reference: "OLD-UPDATED" }),
+    ]);
+  });
+
   it("resumes the stored cursor on a second invocation and activates only on the final page", async () => {
     await seedActive();
     const fetchMock = vi.fn()
