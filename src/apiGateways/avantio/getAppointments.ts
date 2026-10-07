@@ -16,7 +16,11 @@ import {
 } from "../../repositories/accommodation/accommodationReferenceIndexRepository";
 
 export type AvantioCreateResult = { externalId: string; remoteStatus: string | null; providerRequestId: string | null };
-export type AvantioAccommodationPage = { records: Array<Record<string, unknown>>; nextPageUrl: string | null };
+export type AvantioAccommodationPage = {
+    records: Array<Record<string, unknown>>;
+    nextPageUrl: string | null;
+    lastPageUrl: string | null;
+};
 export type AvantioCreateDiagnosticContext = { requestId: string; jobId: string; propertyId: string };
 
 type BoundedProviderBody = { text: string; bytes: Uint8Array };
@@ -481,13 +485,25 @@ export class AvantioApiGateway {
         if (records.length > boundedPageSize) {
             throw new AvantioProviderError("temporarily_unavailable", "provider_subrequest_budget_exhausted", "A página excedeu o limite interno de registros.", "body_received", response.status, providerRequestId);
         }
-        const next = (payload as { _links?: { next?: unknown } })._links?.next;
-        const nextCursor = extractAccommodationCursor(next, response.status, providerRequestId);
+        const links = (payload as { _links?: { next?: unknown; last?: unknown } })._links;
+        const nextCursor = extractAccommodationCursor(links?.next, response.status, providerRequestId);
+        const lastCursor = extractAccommodationCursor(links?.last, response.status, providerRequestId);
+
         let resolvedNextPageUrl: string | null = null;
         if (nextCursor) {
             resolvedNextPageUrl = resolveAccommodationCursor(nextCursor, listUrl, configuredBase, response.status, providerRequestId);
         }
-        return { records, nextPageUrl: resolvedNextPageUrl };
+
+        let resolvedLastPageUrl: string | null = null;
+        if (lastCursor) {
+            resolvedLastPageUrl = resolveAccommodationCursor(lastCursor, listUrl, configuredBase, response.status, providerRequestId);
+        }
+
+        return {
+            records,
+            nextPageUrl: resolvedNextPageUrl,
+            lastPageUrl: resolvedLastPageUrl,
+        };
     }
 
     async getAccommodation(accommodationId: string): Promise<AvantioAccommodation | null> {
