@@ -173,7 +173,7 @@ export class SyncAccommodationsService {
                     const providerUpdatedAt =
                         optionalString(listRecord.updatedAt)
                         ?? optionalString(listRecord.updated_at)
-                        ?? "";
+                        ?? "1970-01-01T00:00:00.000Z";
 
                     const merged = {
                         ...listRecord,
@@ -187,7 +187,7 @@ export class SyncAccommodationsService {
                         remote_status: optionalString(listRecord.status),
                         // Keep this column for schema compatibility, but store
                         // the provider change timestamp when the list exposes it.
-                        // Empty means "provider did not expose a change marker".
+                        // Epoch means "provider did not expose a change marker".
                         inspected_at: providerUpdatedAt,
                     });
                     cacheRecords.push(merged);
