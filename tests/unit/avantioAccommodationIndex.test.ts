@@ -68,25 +68,33 @@ afterEach(() => { vi.unstubAllGlobals(); });
 
 describe("bounded incremental Avantio accommodation index", () => {
   it("returns the incremental public sync response without exposing the cursor", async () => {
-    vi.spyOn(AvantioApiGateway.prototype, "getAccommodationsPage").mockResolvedValue({ records: [rawRecord("route-id", "ROUTE")], nextPageUrl: "https://provider.test/accommodations?page=2&token=private" });
+    vi.spyOn(AvantioApiGateway.prototype, "getAccommodationsPage")
+      .mockResolvedValueOnce({ records: [rawRecord("route-id", "ROUTE")], nextPageUrl: "https://provider.test/accommodations?page=2&token=private" })
+      .mockResolvedValueOnce({ records: [], nextPageUrl: null });
     const response = await SELF.fetch("http://local.test/v1/accommodations/sync", { method: "POST", headers: { "x-api-key": "test-key" } });
     const body = await response.json<any>();
     expect(response.status).toBe(200);
-    expect(body).toEqual({ success: true, synced: 1, complete: false, processed_records: 1, processed_pages: 1, active_generation_available: false, building: true });
+    expect(body).toEqual({ success: true, synced: 1, complete: true, processed_records: 1, processed_pages: 2, active_generation_available: true, building: false });
     expect(JSON.stringify(body)).not.toContain("next_page_url");
     expect(JSON.stringify(body)).not.toContain("token=private");
   });
 
-  it("fetches at most one bounded list page per invocation", async () => {
-    const records = Array.from({ length: 10 }, (_, index) => rawRecord(`id-${index}`, `REF-${index}`));
-    const fetchMock = vi.fn().mockResolvedValue(providerResponse({ data: records, _links: { next: "https://provider.test/accommodations?page=2" } }));
+  it("fetches at most five bounded list pages per invocation", async () => {
+    const fetchMock = vi.fn().mockImplementation(async () => {
+      const page = fetchMock.mock.calls.length;
+      const records = Array.from({ length: 10 }, (_, index) => rawRecord(`id-${page}-${index}`, `REF-${page}-${index}`));
+      return providerResponse({
+        data: records,
+        _links: { next: `https://provider.test/accommodations?page=${page + 1}` },
+      });
+    });
     vi.stubGlobal("fetch", fetchMock);
 
     const result = await new SyncAccommodationsService(env as any).sync();
 
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledTimes(5);
     expect(new URL(fetchMock.mock.calls[0][0]).searchParams.get("pagination_size")).toBe("50");
-    expect(result).toEqual({ synced: 10, complete: false, processed_records: 10, processed_pages: 1, active_generation_available: false, building: true });
+    expect(result).toEqual({ synced: 50, complete: false, processed_records: 50, processed_pages: 5, active_generation_available: false, building: true });
   });
 
   it("indexes records with missing externalReference without per-record detail reads", async () => {
@@ -133,25 +141,31 @@ describe("bounded incremental Avantio accommodation index", () => {
     ]);
   });
 
-  it("resumes the stored cursor on a second invocation and activates only on the final page", async () => {
+  it("resumes the stored cursor across the five-page budget and activates on the final page", async () => {
     await seedActive();
-    const fetchMock = vi.fn()
-      .mockResolvedValueOnce(providerResponse({ data: [rawRecord("new-1", "ONE")], _links: { next: "?page=2&cursor=production-relative" } }))
-      .mockResolvedValueOnce(providerResponse({ data: [rawRecord("new-2", "TWO")] }));
+    const fetchMock = vi.fn();
+    for (let page = 1; page <= 5; page += 1) {
+      fetchMock.mockResolvedValueOnce(providerResponse({
+        data: [rawRecord(`new-${page}`, `REF-${page}`)],
+        _links: { next: `?page=${page + 1}&cursor=production-relative-${page}` },
+      }));
+    }
+    fetchMock.mockResolvedValueOnce(providerResponse({ data: [rawRecord("new-6", "REF-6")] }));
     vi.stubGlobal("fetch", fetchMock);
     const generation = "new-generation";
     const service = new SyncAccommodationsService(env as any, undefined, undefined, undefined, () => new Date(), () => generation);
 
     const partial = await service.sync();
     const partialState = await new AccommodationReferenceIndexRepository(testEnv.DB).getState();
-    expect(partial).toMatchObject({ complete: false, active_generation_available: true, building: true });
+    expect(partial).toMatchObject({ synced: 5, complete: false, processed_records: 5, processed_pages: 5, active_generation_available: true, building: true });
     expect(partialState.active_generation_id).toBe("old-active");
     expect(partialState.building_generation_id).toBe(generation);
+    expect(new URL(fetchMock.mock.calls[1][0]).searchParams.get("page")).toBe("2");
 
     const complete = await service.sync();
     const completeState = await new AccommodationReferenceIndexRepository(testEnv.DB).getState();
-    expect(new URL(fetchMock.mock.calls[1][0]).searchParams.get("page")).toBe("2");
-    expect(complete).toMatchObject({ complete: true, processed_records: 2, processed_pages: 2, active_generation_available: true, building: false });
+    expect(new URL(fetchMock.mock.calls[5][0]).searchParams.get("page")).toBe("6");
+    expect(complete).toMatchObject({ synced: 1, complete: true, processed_records: 6, processed_pages: 6, active_generation_available: true, building: false });
     expect(completeState.active_generation_id).toBe(generation);
     expect(completeState.building_generation_id).toBeNull();
     expect((await testEnv.DB.prepare("SELECT COUNT(*) AS count FROM avantio_accommodation_reference_index WHERE generation_id = 'old-active'").first<{ count: number }>())?.count).toBe(0);
@@ -170,15 +184,11 @@ describe("bounded incremental Avantio accommodation index", () => {
     vi.stubGlobal("fetch", fetchMock);
     const service = new SyncAccommodationsService(productionEnv as any, undefined, undefined, undefined, () => new Date(), () => "production-root-generation");
 
-    const first = await service.sync();
-    const afterFirst = await new AccommodationReferenceIndexRepository(testEnv.DB).getState();
-    const second = await service.sync();
+    const result = await service.sync();
 
-    expect(first).toMatchObject({ synced: 10, complete: false, processed_records: 10, processed_pages: 1, building: true });
-    expect(afterFirst.next_page_url).toBe(expectedCursor);
+    expect(result).toMatchObject({ synced: 11, complete: true, processed_records: 11, processed_pages: 2, building: false });
     expect(fetchMock.mock.calls[1][0]).toBe(expectedCursor);
     expect(new URL(fetchMock.mock.calls[1][0]).searchParams.has("pagination_size")).toBe(false);
-    expect(second).toMatchObject({ synced: 1, complete: true, processed_records: 11, processed_pages: 2, building: false });
     expect(fetchMock.mock.calls.every((call) => call[1]?.method === "GET")).toBe(true);
   });
 
@@ -191,18 +201,24 @@ describe("bounded incremental Avantio accommodation index", () => {
           processed_pages = 1, last_error_code = 'accommodation_index_batch_failed'
       WHERE singleton_id = 1
     `).bind(now, now).run();
-    const fetchMock = vi.fn().mockResolvedValue(providerResponse({ data: [rawRecord("page-2", "PAGE-2")], _links: { next: "/accommodations?page=3&cursor=next" } }));
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(providerResponse({
+        data: [rawRecord("page-2", "PAGE-2")],
+        _links: { next: "/accommodations?page=3&cursor=next" },
+      }))
+      .mockResolvedValueOnce(providerResponse({ data: [rawRecord("page-3", "PAGE-3")] }));
     vi.stubGlobal("fetch", fetchMock);
 
     const result = await new SyncAccommodationsService(env as any).sync();
     const state = await new AccommodationReferenceIndexRepository(testEnv.DB).getState();
 
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(fetchMock.mock.calls[0][0]).toBe("https://provider.test/accommodations?page=2&cursor=stored");
-    expect(result).toMatchObject({ complete: false, processed_records: 11, processed_pages: 2, building: true });
-    expect(state.building_generation_id).toBe("production-generation");
-    expect(state.next_page_url).toBe("https://provider.test/accommodations?page=3&cursor=next");
-    expect(state.status).toBe("building");
+    expect(fetchMock.mock.calls[1][0]).toBe("https://provider.test/accommodations?page=3&cursor=next");
+    expect(result).toMatchObject({ synced: 2, complete: true, processed_records: 12, processed_pages: 3, building: false });
+    expect(state.active_generation_id).toBe("production-generation");
+    expect(state.building_generation_id).toBeNull();
+    expect(state.status).toBe("complete");
   });
 
   it.each([

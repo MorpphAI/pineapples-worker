@@ -117,7 +117,7 @@ describe("Avantio accommodation index status", () => {
 describe("scheduled Avantio accommodation index refresh", () => {
   it("executes exactly one read-only sync batch", async () => {
     const pageSpy = vi.spyOn(AvantioApiGateway.prototype, "getAccommodationsPage")
-      .mockResolvedValue({ records: [rawRecord("scheduled-1")], nextPageUrl: "https://provider.test/pms/v2/accommodations?page=2" });
+      .mockResolvedValue({ records: [rawRecord("scheduled-1")], nextPageUrl: null });
     const createSpy = vi.spyOn(AvantioApiGateway.prototype, "createAccommodation");
 
     await runScheduled();
@@ -264,7 +264,7 @@ describe("Avantio accommodation index batch lease", () => {
     const firstRun = first.sync();
     await started;
     await expect(second.sync()).rejects.toMatchObject({ code: "accommodation_index_busy" });
-    resolvePage({ records: [rawRecord("only-once")], nextPageUrl: "https://provider.test/pms/v2/accommodations?page=2" });
+    resolvePage({ records: [rawRecord("only-once")], nextPageUrl: null });
     await firstRun;
 
     const state = await new AccommodationReferenceIndexRepository(testEnv.DB).getState();
@@ -292,7 +292,7 @@ describe("Avantio accommodation index batch lease", () => {
 
   it("keeps the authenticated HTTP sync endpoint working", async () => {
     const pageSpy = vi.spyOn(AvantioApiGateway.prototype, "getAccommodationsPage")
-      .mockResolvedValue({ records: [rawRecord("manual")], nextPageUrl: "https://provider.test/pms/v2/accommodations?page=2" });
+      .mockResolvedValue({ records: [rawRecord("manual")], nextPageUrl: null });
 
     const response = await SELF.fetch("http://local.test/v1/accommodations/sync", {
       method: "POST",
