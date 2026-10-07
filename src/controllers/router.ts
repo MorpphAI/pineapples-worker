@@ -26,7 +26,7 @@ import { SyncAccommodations } from "./v1/accommodation/syncAccommodations/syncAc
 import { GetAccommodationIndexStatus } from "./v1/accommodation/getAccommodationIndexStatus/getAccommodationIndexStatus";
 import { CangeAuthorizationDecisions } from "./v1/cange/authorizationDecisions/authorizationDecisions";
 import { RemovedKanbanAuthorizationSync } from "./v1/kanban/syncAuthorizationStatus/syncAuthorizationStatus";
-import { AvantioAccommodationCatalog, AvantioAccommodationDetail } from "./v1/avantio/accommodations/catalog";
+import { AvantioAccommodationCatalog, AvantioAccommodationDetail, AvantioRecentAccommodations } from "./v1/avantio/accommodations/catalog";
 
 export const pineapplesRouter = fromHono(new Hono<{ Bindings: Env }>());
 
@@ -42,6 +42,7 @@ pineapplesRouter.post("/v1/accommodations/:id/reset-cleaning-profile", ResetAcco
 pineapplesRouter.get("/v1/cange/authorization-decisions", CangeAuthorizationDecisions);
 pineapplesRouter.post("/v1/cange/authorization-decisions", CangeAuthorizationDecisions);
 pineapplesRouter.post("/v1/kanban/authorization-sync", RemovedKanbanAuthorizationSync);
+pineapplesRouter.get("/v1/avantio/accommodations/recent", AvantioRecentAccommodations);
 pineapplesRouter.get("/v1/avantio/accommodations/catalog", AvantioAccommodationCatalog);
 pineapplesRouter.get("/v1/avantio/accommodations/:id", AvantioAccommodationDetail);
 
