@@ -152,24 +152,38 @@ describe("scheduled Avantio accommodation index refresh", () => {
     });
   });
 
-  it("starts a new generation on the invocation after completion", async () => {
-    vi.spyOn(AvantioApiGateway.prototype, "getAccommodationsPage")
+  it("skips a fresh complete generation and starts a replacement only after it becomes stale", async () => {
+    const pageSpy = vi.spyOn(AvantioApiGateway.prototype, "getAccommodationsPage")
       .mockResolvedValueOnce({ records: [rawRecord("first")], nextPageUrl: null })
       .mockResolvedValueOnce({ records: [rawRecord("second")], nextPageUrl: null });
 
     await runScheduled();
     const first = await new AccommodationReferenceIndexRepository(testEnv.DB).getState();
-    await runScheduled();
-    const second = await new AccommodationReferenceIndexRepository(testEnv.DB).getState();
 
+    await runScheduled();
+    const fresh = await new AccommodationReferenceIndexRepository(testEnv.DB).getState();
+
+    const staleAt = new Date(Date.now() - 14_401_000).toISOString();
+    await testEnv.DB.prepare(`
+      UPDATE avantio_accommodation_index_sync_state
+      SET completed_at = ?, updated_at = ?
+      WHERE singleton_id = 1
+    `).bind(staleAt, staleAt).run();
+
+    await runScheduled();
+    const refreshed = await new AccommodationReferenceIndexRepository(testEnv.DB).getState();
+
+    expect(pageSpy).toHaveBeenCalledTimes(2);
     expect(first.status).toBe("complete");
-    expect(second.status).toBe("complete");
-    expect(second.active_generation_id).not.toBe(first.active_generation_id);
+    expect(fresh.status).toBe("complete");
+    expect(fresh.active_generation_id).toBe(first.active_generation_id);
+    expect(refreshed.status).toBe("complete");
+    expect(refreshed.active_generation_id).not.toBe(first.active_generation_id);
   });
 
   it("keeps the old active generation usable while a replacement builds", async () => {
     const completedAt = new Date().toISOString();
-    await setActive(completedAt);
+    await setActive(completedAt, "building");
     await testEnv.DB.prepare(`
       INSERT INTO avantio_accommodation_reference_index
         (generation_id, accommodation_id, external_reference, name, remote_status, inspected_at)

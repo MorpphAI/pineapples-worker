@@ -4,6 +4,7 @@ import { Env } from "./types/configTypes";
 import { pineapplesRouter } from "./controllers/router";
 import { authMiddleware } from "./middleware/auth";
 import { AccommodationSyncError, SyncAccommodationsService } from "./services/v1/accommodation/syncAccommodationsService";
+import { AccommodationIndexStatusService } from "./services/v1/accommodation/accommodationIndexStatusService";
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -25,6 +26,12 @@ openapi.route("/", pineapplesRouter);
 
 export async function runScheduledAccommodationIndexBatch(env: Env): Promise<void> {
 	try {
+		const status = await new AccommodationIndexStatusService(env).status();
+		if (status.fresh && !status.building) {
+			console.log(`[AccommodationIndexScheduled] stage=skip code=index_fresh age_seconds=${status.age_seconds ?? -1} max_age_seconds=${status.max_age_seconds}`);
+			return;
+		}
+
 		const result = await new SyncAccommodationsService(env).sync();
 		const code = result.complete ? "generation_complete" : "batch_processed";
 		console.log(`[AccommodationIndexScheduled] stage=sync code=${code} synced=${result.synced} processed_records=${result.processed_records} processed_pages=${result.processed_pages}`);
