@@ -25,6 +25,23 @@ function isPineOsImportEligible(record: { name: string | null; external_referenc
     && !hasInternalTestMarker(record.external_reference);
 }
 
+function stableSerialize(value: unknown): string {
+  if (value === null || typeof value !== "object") return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(stableSerialize).join(",")}]`;
+
+  const record = value as Record<string, unknown>;
+  return `{${Object.keys(record)
+    .sort()
+    .map((key) => `${JSON.stringify(key)}:${stableSerialize(record[key])}`)
+    .join(",")}}`;
+}
+
+async function stableFingerprint(value: unknown): Promise<string> {
+  const bytes = new TextEncoder().encode(stableSerialize(value));
+  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
 function jsonError(c: CatalogContext, status: 400 | 404 | 409 | 422 | 500 | 502 | 503, code: string, message: string) {
   return c.json({ success: false, error: { code, message } }, status);
 }
@@ -32,9 +49,9 @@ function jsonError(c: CatalogContext, status: 400 | 404 | 409 | 422 | 500 | 502 
 export class AvantioRecentAccommodations extends OpenAPIRoute {
   schema = {
     tags: ["Avantio"],
-    summary: "Read only the most recent Avantio accommodation page",
+    summary: "Read only the newest Avantio accommodation page",
     responses: {
-      "200": { description: "Most recent accommodation page from Avantio" },
+      "200": { description: "Newest accommodation page from Avantio" },
       "502": { description: "Provider page could not be read" },
     },
   };
@@ -44,8 +61,23 @@ export class AvantioRecentAccommodations extends OpenAPIRoute {
     const limit = Number.isFinite(rawLimit) ? Math.max(1, Math.min(50, Math.floor(rawLimit))) : 50;
 
     try {
-      const page = await new AvantioApiGateway(c.env).getAccommodationsPage(null, limit);
-      const records = page.records.flatMap((item) => {
+      const gateway = new AvantioApiGateway(c.env);
+      const firstPage = await gateway.getAccommodationsPage(null, limit);
+      const page =
+        firstPage.lastPageUrl && firstPage.nextPageUrl
+          ? await gateway.getAccommodationsPage(firstPage.lastPageUrl, limit)
+          : firstPage;
+
+      const records: Array<{
+        accommodation_id: string;
+        external_reference: string | null;
+        name: string | null;
+        remote_status: string | null;
+        provider_updated_at: string | null;
+        provider_fingerprint: string;
+      }> = [];
+
+      for (const item of page.records) {
         const id = typeof item.id === "string" || typeof item.id === "number"
           ? String(item.id).trim()
           : typeof item.accommodationId === "string" || typeof item.accommodationId === "number"
@@ -53,7 +85,7 @@ export class AvantioRecentAccommodations extends OpenAPIRoute {
             : typeof item.accommodation_id === "string" || typeof item.accommodation_id === "number"
               ? String(item.accommodation_id).trim()
               : "";
-        if (!id) return [];
+        if (!id) continue;
 
         const record = {
           accommodation_id: id,
@@ -65,13 +97,22 @@ export class AvantioRecentAccommodations extends OpenAPIRoute {
           remote_status:
             typeof item.status === "string" && item.status.trim() ? item.status.trim() : null,
           provider_updated_at:
-            typeof item.updatedAt === "string" && item.updatedAt.trim() ? item.updatedAt.trim() : null,
+            typeof item.updatedAt === "string" && item.updatedAt.trim()
+              ? item.updatedAt.trim()
+              : typeof item.updated_at === "string" && item.updated_at.trim()
+                ? item.updated_at.trim()
+                : null,
+          provider_fingerprint: await stableFingerprint(item),
         };
 
-        return isPineOsImportEligible(record) ? [record] : [];
-      });
+        if (isPineOsImportEligible(record)) records.push(record);
+      }
 
-      return c.json({ success: true, records }, 200);
+      return c.json({
+        success: true,
+        records,
+        page_source: firstPage.lastPageUrl && firstPage.nextPageUrl ? "last" : "only",
+      }, 200);
     } catch (error) {
       console.error("[AvantioRecentAccommodations] provider_page_failed", {
         error: error instanceof Error ? error.name : "unknown",
