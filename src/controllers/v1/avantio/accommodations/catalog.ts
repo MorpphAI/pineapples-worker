@@ -11,9 +11,18 @@ function hasParentheticalProductionMarker(value: unknown): boolean {
   return typeof value === "string" && /\([^)]*\)/.test(value);
 }
 
+function hasInternalTestMarker(value: unknown): boolean {
+  if (typeof value !== "string") return false;
+  const normalized = value.trim().toLowerCase();
+  return /(teste|test|mock|demo|fake|homolog|sandbox|probe|m0rph|morph)/.test(normalized)
+    || /^modelo(?:\b|-|\d)/.test(normalized);
+}
+
 function isPineOsImportEligible(record: { name: string | null; external_reference: string | null }): boolean {
   return !hasParentheticalProductionMarker(record.name)
-    && !hasParentheticalProductionMarker(record.external_reference);
+    && !hasParentheticalProductionMarker(record.external_reference)
+    && !hasInternalTestMarker(record.name)
+    && !hasInternalTestMarker(record.external_reference);
 }
 
 function jsonError(c: CatalogContext, status: 400 | 404 | 409 | 422 | 500 | 502 | 503, code: string, message: string) {
