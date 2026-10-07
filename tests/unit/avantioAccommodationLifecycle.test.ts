@@ -125,7 +125,7 @@ describe("scheduled Avantio accommodation index refresh", () => {
     const state = await new AccommodationReferenceIndexRepository(testEnv.DB).getState();
     expect(pageSpy).toHaveBeenCalledTimes(1);
     expect(createSpy).not.toHaveBeenCalled();
-    expect(state).toMatchObject({ status: "building", processed_records: 1, processed_pages: 1 });
+    expect(state).toMatchObject({ status: "complete", processed_records: 1, processed_pages: 1 });
   });
 
   it("resumes a failed generation without restarting it", async () => {
