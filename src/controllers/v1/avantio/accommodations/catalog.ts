@@ -29,6 +29,58 @@ function jsonError(c: CatalogContext, status: 400 | 404 | 409 | 422 | 500 | 502 
   return c.json({ success: false, error: { code, message } }, status);
 }
 
+export class AvantioRecentAccommodations extends OpenAPIRoute {
+  schema = {
+    tags: ["Avantio"],
+    summary: "Read only the most recent Avantio accommodation page",
+    responses: {
+      "200": { description: "Most recent accommodation page from Avantio" },
+      "502": { description: "Provider page could not be read" },
+    },
+  };
+
+  async handle(c: CatalogContext) {
+    const rawLimit = Number(c.req.query("limit") ?? "50");
+    const limit = Number.isFinite(rawLimit) ? Math.max(1, Math.min(50, Math.floor(rawLimit))) : 50;
+
+    try {
+      const page = await new AvantioApiGateway(c.env).getAccommodationsPage(null, limit);
+      const records = page.records.flatMap((item) => {
+        const id = typeof item.id === "string" || typeof item.id === "number"
+          ? String(item.id).trim()
+          : typeof item.accommodationId === "string" || typeof item.accommodationId === "number"
+            ? String(item.accommodationId).trim()
+            : typeof item.accommodation_id === "string" || typeof item.accommodation_id === "number"
+              ? String(item.accommodation_id).trim()
+              : "";
+        if (!id) return [];
+
+        const record = {
+          accommodation_id: id,
+          external_reference:
+            typeof item.externalReference === "string" && item.externalReference.trim()
+              ? item.externalReference.trim()
+              : null,
+          name: typeof item.name === "string" && item.name.trim() ? item.name.trim() : null,
+          remote_status:
+            typeof item.status === "string" && item.status.trim() ? item.status.trim() : null,
+          provider_updated_at:
+            typeof item.updatedAt === "string" && item.updatedAt.trim() ? item.updatedAt.trim() : null,
+        };
+
+        return isPineOsImportEligible(record) ? [record] : [];
+      });
+
+      return c.json({ success: true, records }, 200);
+    } catch (error) {
+      console.error("[AvantioRecentAccommodations] provider_page_failed", {
+        error: error instanceof Error ? error.name : "unknown",
+      });
+      return jsonError(c, 502, "avantio_recent_unavailable", "Não foi possível ler os imóveis recentes da Avantio.");
+    }
+  }
+}
+
 export class AvantioAccommodationCatalog extends OpenAPIRoute {
   schema = {
     tags: ["Avantio"],
