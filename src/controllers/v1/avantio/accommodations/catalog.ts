@@ -7,6 +7,15 @@ import { AccommodationSyncError, SyncAccommodationsService } from "../../../../s
 
 type CatalogContext = Context<{ Bindings: Env }>;
 
+function hasParentheticalProductionMarker(value: unknown): boolean {
+  return typeof value === "string" && /\([^)]*\)/.test(value);
+}
+
+function isPineOsImportEligible(record: { name: string | null; external_reference: string | null }): boolean {
+  return !hasParentheticalProductionMarker(record.name)
+    && !hasParentheticalProductionMarker(record.external_reference);
+}
+
 function jsonError(c: CatalogContext, status: 400 | 404 | 409 | 422 | 500 | 502 | 503, code: string, message: string) {
   return c.json({ success: false, error: { code, message } }, status);
 }
@@ -44,9 +53,10 @@ export class AvantioAccommodationCatalog extends OpenAPIRoute {
 
       const page = await new AccommodationReferenceIndexRepository(c.env.DB)
         .listActiveRecords(limit, cursor);
+      const eligibleRecords = page.records.filter(isPineOsImportEligible);
       return c.json({
         success: true,
-        records: page.records,
+        records: eligibleRecords,
         next_cursor: page.next_cursor,
         index_completed_at: page.completed_at,
       }, 200);
