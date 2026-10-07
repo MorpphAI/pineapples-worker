@@ -88,12 +88,23 @@ export class SyncAccommodationsService {
         let state: AccommodationIndexSyncState | null = null;
         const leaseOwner = this.leaseId();
         let leaseAcquired = false;
+        let synced = 0;
+
         try {
             const leaseStartedAt = this.now();
-            const leaseExpiresAt = new Date(leaseStartedAt.getTime() + ACCOMMODATION_SYNC_LEASE_SECONDS * 1000);
-            leaseAcquired = await this.referenceIndex.acquireBatchLease(leaseOwner, leaseStartedAt.toISOString(), leaseExpiresAt.toISOString());
+            const leaseExpiresAt = new Date(
+                leaseStartedAt.getTime() + ACCOMMODATION_SYNC_LEASE_SECONDS * 1000,
+            );
+            leaseAcquired = await this.referenceIndex.acquireBatchLease(
+                leaseOwner,
+                leaseStartedAt.toISOString(),
+                leaseExpiresAt.toISOString(),
+            );
             if (!leaseAcquired) {
-                throw new AccommodationSyncError("accommodation_index_busy", "Outro lote do índice já está em execução.");
+                throw new AccommodationSyncError(
+                    "accommodation_index_busy",
+                    "Outro lote do índice já está em execução.",
+                );
             }
 
             state = await this.referenceIndex.getState();
@@ -104,78 +115,138 @@ export class SyncAccommodationsService {
                 state = await this.referenceIndex.resumeGeneration(now);
             }
             if (!state.building_generation_id) {
-                throw new AccommodationSyncError("accommodation_index_batch_failed", "Não foi possível iniciar uma geração do índice.");
+                throw new AccommodationSyncError(
+                    "accommodation_index_batch_failed",
+                    "Não foi possível iniciar uma geração do índice.",
+                );
             }
 
-            const renewalStartedAt = this.now();
-            const renewedUntil = new Date(renewalStartedAt.getTime() + ACCOMMODATION_SYNC_LEASE_SECONDS * 1000);
-            const leaseRenewed = await this.referenceIndex.renewBatchLease(leaseOwner, renewalStartedAt.toISOString(), renewedUntil.toISOString());
-            if (!leaseRenewed) {
-                throw new AccommodationSyncError("accommodation_index_lease_lost", "A posse do lote de sincronização expirou.");
-            }
-
-            budget.consume();
-            const page: AvantioAccommodationPage = await this.avantioApiGateway.getAccommodationsPage(state.next_page_url, ACCOMMODATION_SYNC_PAGE_SIZE);
-            if (page.records.length > ACCOMMODATION_SYNC_PAGE_SIZE) {
-                throw new AccommodationSyncError("provider_subrequest_budget_exhausted", "A página do provedor excedeu o limite interno.");
-            }
-
-            const inspectedAt = this.now().toISOString();
-            const indexRecords: AccommodationIndexRecord[] = [];
-            const cacheRecords: AvantioAccommodation[] = [];
-            for (const listRecord of page.records) {
-                const accommodationId = authoritativeAccommodationId(listRecord);
-                if (!accommodationId) {
-                    throw new AccommodationSyncError("accommodation_index_record_invalid", "Uma acomodação não possui ID autoritativo.");
+            // Use the provider budget in one request instead of forcing the
+            // browser to call this endpoint once for every 50 accommodations.
+            while (state.building_generation_id && budget.count < ACCOMMODATION_SYNC_MAX_PROVIDER_REQUESTS) {
+                const renewalStartedAt = this.now();
+                const renewedUntil = new Date(
+                    renewalStartedAt.getTime() + ACCOMMODATION_SYNC_LEASE_SECONDS * 1000,
+                );
+                const leaseRenewed = await this.referenceIndex.renewBatchLease(
+                    leaseOwner,
+                    renewalStartedAt.toISOString(),
+                    renewedUntil.toISOString(),
+                );
+                if (!leaseRenewed) {
+                    throw new AccommodationSyncError(
+                        "accommodation_index_lease_lost",
+                        "A posse do lote de sincronização expirou.",
+                    );
                 }
 
-                // The outbound PineOS -> Avantio reconciliation path was removed.
-                // The index is now only a discovery catalog for inbound imports, so
-                // missing externalReference must not trigger one provider detail GET
-                // per historical accommodation. PineOS reads the full detail only
-                // for records it has not imported yet.
-                const externalReference = typeof listRecord.externalReference === "string"
-                    ? optionalString(listRecord.externalReference)
-                    : null;
-                const merged = { ...listRecord, id: accommodationId } as unknown as AvantioAccommodation;
-                indexRecords.push({
-                    accommodation_id: accommodationId,
-                    external_reference: externalReference,
-                    name: optionalString(listRecord.name),
-                    remote_status: optionalString(listRecord.status),
-                    inspected_at: inspectedAt,
-                });
-                cacheRecords.push(merged);
+                budget.consume();
+                const page: AvantioAccommodationPage =
+                    await this.avantioApiGateway.getAccommodationsPage(
+                        state.next_page_url,
+                        ACCOMMODATION_SYNC_PAGE_SIZE,
+                    );
+                if (page.records.length > ACCOMMODATION_SYNC_PAGE_SIZE) {
+                    throw new AccommodationSyncError(
+                        "provider_subrequest_budget_exhausted",
+                        "A página do provedor excedeu o limite interno.",
+                    );
+                }
+
+                const inspectedAt = this.now().toISOString();
+                const indexRecords: AccommodationIndexRecord[] = [];
+                const cacheRecords: AvantioAccommodation[] = [];
+
+                for (const listRecord of page.records) {
+                    const accommodationId = authoritativeAccommodationId(listRecord);
+                    if (!accommodationId) {
+                        throw new AccommodationSyncError(
+                            "accommodation_index_record_invalid",
+                            "Uma acomodação não possui ID autoritativo.",
+                        );
+                    }
+
+                    const externalReference =
+                        typeof listRecord.externalReference === "string"
+                            ? optionalString(listRecord.externalReference)
+                            : null;
+                    const providerUpdatedAt =
+                        optionalString(listRecord.updatedAt)
+                        ?? optionalString(listRecord.updated_at)
+                        ?? "";
+
+                    const merged = {
+                        ...listRecord,
+                        id: accommodationId,
+                    } as unknown as AvantioAccommodation;
+
+                    indexRecords.push({
+                        accommodation_id: accommodationId,
+                        external_reference: externalReference,
+                        name: optionalString(listRecord.name),
+                        remote_status: optionalString(listRecord.status),
+                        // Keep this column for schema compatibility, but store
+                        // the provider change timestamp when the list exposes it.
+                        // Empty means "provider did not expose a change marker".
+                        inspected_at: providerUpdatedAt,
+                    });
+                    cacheRecords.push(merged);
+                }
+
+                try {
+                    await this.accommodationRepo.upsertMany(cacheRecords);
+                } catch {
+                    logSyncDiagnostic("d1_cache_write", "accommodation_index_cache_write_failed");
+                    throw new AccommodationSyncError(
+                        "accommodation_index_cache_write_failed",
+                        "Accommodation cache write failed.",
+                    );
+                }
+
+                try {
+                    state = await this.referenceIndex.savePage(
+                        state.building_generation_id,
+                        indexRecords,
+                        page.nextPageUrl,
+                        inspectedAt,
+                        leaseOwner,
+                    );
+                } catch (error) {
+                    const code =
+                        error instanceof AccommodationIndexError
+                            ? error.code
+                            : "accommodation_index_index_write_failed";
+                    logSyncDiagnostic("d1_index_write", code);
+                    if (error instanceof AccommodationIndexError) throw error;
+                    throw new AccommodationSyncError(
+                        code,
+                        "Accommodation index write failed.",
+                    );
+                }
+
+                synced += indexRecords.length;
             }
 
-            try {
-                await this.accommodationRepo.upsertMany(cacheRecords);
-            } catch {
-                logSyncDiagnostic("d1_cache_write", "accommodation_index_cache_write_failed");
-                throw new AccommodationSyncError("accommodation_index_cache_write_failed", "Accommodation cache write failed.");
-            }
-
-            let saved: AccommodationIndexSyncState;
-            try {
-                saved = await this.referenceIndex.savePage(state.building_generation_id, indexRecords, page.nextPageUrl, inspectedAt, leaseOwner);
-            } catch (error) {
-                const code = error instanceof AccommodationIndexError ? error.code : "accommodation_index_index_write_failed";
-                logSyncDiagnostic("d1_index_write", code);
-                if (error instanceof AccommodationIndexError) throw error;
-                throw new AccommodationSyncError(code, "Accommodation index write failed.");
-            }
             return {
-                synced: indexRecords.length,
-                complete: !saved.building_generation_id && saved.active_generation_id === state.building_generation_id,
-                processed_records: saved.processed_records,
-                processed_pages: saved.processed_pages,
-                active_generation_available: !!saved.active_generation_id,
-                building: !!saved.building_generation_id,
+                synced,
+                complete: !state.building_generation_id,
+                processed_records: state.processed_records,
+                processed_pages: state.processed_pages,
+                active_generation_available: !!state.active_generation_id,
+                building: !!state.building_generation_id,
             };
         } catch (error) {
             const normalized = syncError(error);
             if (state?.building_generation_id) {
-                try { await this.referenceIndex.markBatchFailed(normalized.code, this.now().toISOString(), leaseOwner); } catch { /* preserve the original sanitized failure */ }
+                try {
+                    await this.referenceIndex.markBatchFailed(
+                        normalized.code,
+                        this.now().toISOString(),
+                        leaseOwner,
+                    );
+                } catch {
+                    // Preserve the original sanitized failure.
+                }
             }
             throw normalized;
         } finally {
