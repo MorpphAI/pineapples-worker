@@ -13,6 +13,12 @@ describe("distance audit source (Avantio -> PineOS)", () => {
       provider_path: "surroundingsAndDistances",
     });
   });
+  it("accepts numeric strings returned by the provider, as the PineOS mapper does", () => {
+    expect(extractDistanceAuditSource({
+      location: { coordinates: { lat: "-22.9000", lon: "-43.2000" } },
+    }).coordinates).toEqual({ latitude: -22.9, longitude: -43.2 });
+  });
+
   it("rejects missing or invalid coordinates instead of inventing a location", () => {
     expect(extractDistanceAuditSource({ location: { coordinates: { lat: 92, lon: 0 } } }).coordinates).toBeNull();
     expect(extractDistanceAuditSource(null).coordinates).toBeNull();
