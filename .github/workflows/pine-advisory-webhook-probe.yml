@@ -1,0 +1,35 @@
+name: PineOS read-only integration probes
+on:
+  push:
+    branches:
+      - test/pine-audit-webhook-probe-20261009
+permissions:
+  contents: read
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Check webhook registration and Edge Function reachability (no secret, no real jobs)
+        shell: bash
+        run: |
+          set -uo pipefail
+          probe() {
+            local label="$1" url="$2" status
+            local body
+            body="$(mktemp)"
+            status="$(curl -sS --max-time 12 -o "$body" -w '%{http_code}' \
+              -X POST -H "Content-Type: application/json" \
+              --data '{"job_id":"00000000-0000-4000-8000-000000000000"}' \
+              "$url")" || status="network_error"
+            echo "PROBE $label HTTP=$status"
+            # Only show bounded public error codes, never response headers or secrets.
+            head -c 320 "$body" | tr '\n' ' ' || true
+            echo
+            rm -f "$body"
+          }
+          probe photo_n8n https://n8n.morphia.app/webhook/pine/jobs/media
+          probe distance_n8n https://n8n.morphia.app/webhook/pine/jobs/distance-audit
+          probe property_media_function https://vshruwobguomqplpqnnk.supabase.co/functions/v1/property-media-command
+          probe integration_worker_function https://vshruwobguomqplpqnnk.supabase.co/functions/v1/integration-worker-command
+          probe media_dispatcher_function https://vshruwobguomqplpqnnk.supabase.co/functions/v1/dispatch-media-jobs
