@@ -1,4 +1,5 @@
 import { OpenAPIRoute } from "chanfana";
+import { extractDistanceAuditSource } from "../../../../integrations/avantio/accommodations/distanceAuditSource";
 import { Context } from "hono";
 import { AvantioApiGateway } from "../../../../apiGateways/avantio/getAppointments";
 import { AccommodationIndexError, AccommodationReferenceIndexRepository } from "../../../../repositories/accommodation/accommodationReferenceIndexRepository";
@@ -189,7 +190,7 @@ export class AvantioAccommodationDetail extends OpenAPIRoute {
 
     try {
       const detail = await new AvantioApiGateway(c.env).getAccommodationStrict(accommodationId);
-      return c.json({ success: true, accommodation_id: accommodationId, detail }, 200);
+      return c.json({ success: true, accommodation_id: accommodationId, detail, distance_audit_source: extractDistanceAuditSource(detail) }, 200);
     } catch (error) {
       console.error("[AvantioAccommodationDetail] detail_read_failed", {
         accommodation_id: accommodationId,
