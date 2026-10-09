@@ -15,15 +15,23 @@ function object(value: unknown): Record<string, unknown> | null {
     : null;
 }
 
+function numericCoordinate(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string" && value.trim()) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
+
 export function extractDistanceAuditSource(detail: unknown): DistanceAuditSource {
   const root = object(detail);
   const location = object(root?.location);
   const coordinates = object(location?.coordinates);
-  const latitude = coordinates?.lat;
-  const longitude = coordinates?.lon;
-  const valid = typeof latitude === "number" && Number.isFinite(latitude)
-    && latitude >= -90 && latitude <= 90 && typeof longitude === "number"
-    && Number.isFinite(longitude) && longitude >= -180 && longitude <= 180;
+  const latitude = numericCoordinate(coordinates?.lat);
+  const longitude = numericCoordinate(coordinates?.lon);
+  const valid = latitude !== null && latitude >= -90 && latitude <= 90
+    && longitude !== null && longitude >= -180 && longitude <= 180;
   return {
     coordinates: valid ? { latitude, longitude } : null,
     // Only the explicit surroundings container: never expose the owner,
