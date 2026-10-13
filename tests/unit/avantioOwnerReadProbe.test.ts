@@ -109,7 +109,14 @@ describe("Exact owner read for inbound property sync", () => {
 
   it("fails closed when the provider disallows GET", async () => {
     const remote = vi.fn().mockResolvedValue(reply(405));
-    expect(await readAvantioOwner(env, "244405", remote)).toEqual({ available: false, owner: null });
+    expect(await readAvantioOwner(env, "244405", remote))
+      .toEqual({ available: false, owner: null, capability_blocked: true });
+  });
+
+  it("does not block other owners when the exact ID simply was not found", async () => {
+    const remote = vi.fn().mockResolvedValue(reply(404));
+    expect(await readAvantioOwner(env, "244405", remote))
+      .toEqual({ available: false, owner: null });
   });
 
   it("rejects a nonnumeric id without a provider request", async () => {
