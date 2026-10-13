@@ -124,7 +124,7 @@ export async function readAvantioOwner(
   env: Pick<Env, "AVANTIO_BASE_URL" | "AVANTIO_API_KEY">,
   ownerId: string,
   fetcher: Fetcher = fetch,
-): Promise<{ available: boolean; owner: Record<string, unknown> | null }> {
+): Promise<{ available: boolean; owner: Record<string, unknown> | null; capability_blocked?: boolean }> {
   if (!/^\d{1,12}$/.test(ownerId)) return { available: false, owner: null };
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 8_000);
@@ -138,7 +138,9 @@ export async function readAvantioOwner(
       },
     );
     if (!response.ok || !(response.headers.get("content-type") ?? "").includes("json")) {
-      return { available: false, owner: null };
+      return [401, 403, 405, 501].includes(response.status)
+        ? { available: false, owner: null, capability_blocked: true }
+        : { available: false, owner: null };
     }
     const payload: unknown = await response.json();
     const matching = rowsFromPayload(payload).find((row) => String(row.id ?? "").trim() === ownerId);
@@ -155,7 +157,7 @@ export async function readAvantioOwner(
     }
     return { available: true, owner };
   } catch {
-    return { available: false, owner: null };
+    return { available: false, owner: null, capability_blocked: true };
   } finally {
     clearTimeout(timeout);
   }
