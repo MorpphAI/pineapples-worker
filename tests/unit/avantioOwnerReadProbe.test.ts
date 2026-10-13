@@ -1,6 +1,6 @@
 import { SELF } from "cloudflare:test";
 import { describe, expect, it, vi } from "vitest";
-import { probeAvantioOwnerRead } from "../../src/apiGateways/avantio/ownerReadProbe";
+import { probeAvantioOwnerRead, readAvantioOwner } from "../../src/apiGateways/avantio/ownerReadProbe";
 
 const env = {
   AVANTIO_API_KEY: "internal-provider-secret",
@@ -81,5 +81,52 @@ describe("Avantio owner read-only probe", () => {
       headers: { "x-api-key": "test-key" },
     });
     expect(invalid.status).toBe(422);
+  });
+});
+
+
+describe("Exact owner read for inbound property sync", () => {
+  it("returns a matching owner's allow-listed fields without leaking unknown private attributes", async () => {
+    const remote = vi.fn().mockResolvedValue(reply(200, {
+      data: { id: 244405, name: "Ana", surnames: ["Costa"],
+        email: "ana@example.test", phone: "123", banking: { bank: "A" },
+        secretProviderToken: "DO_NOT_EXPOSE" },
+    }));
+    const result = await readAvantioOwner(env, "244405", remote);
+    expect(result).toEqual({ available: true, owner: {
+      id: 244405, name: "Ana", surnames: ["Costa"],
+      email: "ana@example.test", phone: "123", banking: { bank: "A" },
+    } });
+    expect(JSON.stringify(result)).not.toContain("DO_NOT_EXPOSE");
+    expect(remote).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not confuse owners or enumerate the collection", async () => {
+    const remote = vi.fn().mockResolvedValue(reply(200, { data: { id: 9999, name: "Other" } }));
+    expect(await readAvantioOwner(env, "244405", remote)).toEqual({ available: false, owner: null });
+    expect(remote).toHaveBeenCalledTimes(1);
+  });
+
+  it("fails closed when the provider disallows GET", async () => {
+    const remote = vi.fn().mockResolvedValue(reply(405));
+    expect(await readAvantioOwner(env, "244405", remote))
+      .toEqual({ available: false, owner: null, capability_blocked: true });
+  });
+
+  it("does not block other owners when the exact ID simply was not found", async () => {
+    const remote = vi.fn().mockResolvedValue(reply(404));
+    expect(await readAvantioOwner(env, "244405", remote))
+      .toEqual({ available: false, owner: null });
+  });
+
+  it("rejects a nonnumeric id without a provider request", async () => {
+    const remote = vi.fn();
+    expect(await readAvantioOwner(env, "../owners", remote)).toEqual({ available: false, owner: null });
+    expect(remote).not.toHaveBeenCalled();
+  });
+
+  it("requires the worker secret on the owner route", async () => {
+    const response = await SELF.fetch("http://local.test/v1/avantio/owners/244405");
+    expect(response.status).toBe(401);
   });
 });
