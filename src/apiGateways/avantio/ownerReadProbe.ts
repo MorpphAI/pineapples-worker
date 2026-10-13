@@ -113,3 +113,50 @@ export async function probeAvantioOwnerRead(
   }
   return { owner_id: ownerId, checks, owner_name_available: nameAvailable };
 }
+
+/**
+ * Read a single owner by the exact Avantio ID attached to an accommodation.
+ * The provider's GET capability is not guaranteed for every account.
+ * Never list owners or guess a different person's identity as a fallback.
+ * Only allow-listed provider fields leave this internal worker boundary.
+ */
+export async function readAvantioOwner(
+  env: Pick<Env, "AVANTIO_BASE_URL" | "AVANTIO_API_KEY">,
+  ownerId: string,
+  fetcher: Fetcher = fetch,
+): Promise<{ available: boolean; owner: Record<string, unknown> | null }> {
+  if (!/^\d{1,12}$/.test(ownerId)) return { available: false, owner: null };
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 8_000);
+  try {
+    const response = await fetcher(
+      `${env.AVANTIO_BASE_URL.replace(/\/+$/, "")}/owners/${encodeURIComponent(ownerId)}`,
+      {
+        method: "GET",
+        headers: { "X-Avantio-Auth": env.AVANTIO_API_KEY, accept: "application/json" },
+        signal: controller.signal,
+      },
+    );
+    if (!response.ok || !(response.headers.get("content-type") ?? "").includes("json")) {
+      return { available: false, owner: null };
+    }
+    const payload: unknown = await response.json();
+    const matching = rowsFromPayload(payload).find((row) => String(row.id ?? "").trim() === ownerId);
+    if (!matching) return { available: false, owner: null };
+    const allowed = [
+      "id", "fullName", "displayName", "name", "firstName", "firstname",
+      "lastName", "lastname", "surname", "surnames", "email", "phone",
+      "phoneNumber", "mobile", "taxId", "nationalId", "birthDate",
+      "address", "banking", "bankAccount",
+    ];
+    const owner: Record<string, unknown> = {};
+    for (const key of allowed) {
+      if (Object.hasOwn(matching, key) && matching[key] != null) owner[key] = matching[key];
+    }
+    return { available: true, owner };
+  } catch {
+    return { available: false, owner: null };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
